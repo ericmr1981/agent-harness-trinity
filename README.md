@@ -8,6 +8,9 @@ It bundles three OpenClaw skills that form a single “execution + governance”
 - **project-harness-guards** — agent-first repo scaffolding + drift/change guards
 - **dev-project-harness-loop** — the combined operating system (autoloop + guards)
 
+Optional extension (does not change the core design):
+- **subagent-coding-lite** — lightweight subagent dispatch for coding tasks (no-commit subagent + standardized acceptance + handoff packets)
+
 ## Why this exists
 
 Long tasks fail in practice because progress is not:
@@ -31,6 +34,10 @@ Example (OpenClaw per-agent workspace):
 
 ```bash
 cp -a dev-project-autoloop dev-project-harness-loop project-harness-guards \
+  ~/.openclaw/agents/<agent-id>/workspace/skills/
+
+# Optional extension:
+cp -a subagent-coding-lite \
   ~/.openclaw/agents/<agent-id>/workspace/skills/
 ```
 
