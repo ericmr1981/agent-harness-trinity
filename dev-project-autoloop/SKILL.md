@@ -73,3 +73,7 @@ Pause when:
 
 If you observe missing harness pieces (no `CLAUDE.md`, no progress log, no oracle), switch to the parent workflow:
 - `dev-project-harness-loop` (or scaffold with `project-harness-guards`).
+
+## References
+
+- `references/anthropic-effective-harnesses-mapping.md` (Anthropic 编排 → 三技能家族落地对照卡)

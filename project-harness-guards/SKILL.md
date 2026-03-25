@@ -71,5 +71,6 @@ If a guard fails:
 ## References
 
 Read when you need details:
+- `references/anthropic-effective-harnesses-mapping.md` (Anthropic 编排 → 三技能家族落地对照卡)
 - `references/harness-layout.md`
 - `references/task-log-format.md`

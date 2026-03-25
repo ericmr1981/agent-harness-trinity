@@ -101,3 +101,7 @@ Pause and ask the human if:
 - credentials/billing/external side effects are required
 - product direction is ambiguous
 - repeated attempts fail without new evidence
+
+## References
+
+- `references/anthropic-effective-harnesses-mapping.md` (Anthropic 编排 → 三技能家族落地对照卡)
