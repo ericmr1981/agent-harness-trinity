@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(project-harness-guards/scripts/*.sh scripts/*.sh)
+          for f in "${files[@]}"; do
+            echo "[bash -n] $f"
+            bash -n "$f"
+          done
+
+      - name: Skill folder sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          for d in dev-project-autoloop project-harness-guards dev-project-harness-loop; do
+            test -f "$d/SKILL.md"
+          done

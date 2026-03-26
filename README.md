@@ -9,7 +9,7 @@ It bundles three OpenClaw skills that form a single “execution + governance”
 - **dev-project-harness-loop** — the combined operating system (autoloop + guards)
 
 Optional extension (does not change the core design):
-- **subagent-coding-lite** — lightweight subagent dispatch for coding tasks (no-commit subagent + standardized acceptance + handoff packets)
+- **subagent-coding-lite** — lightweight subagent dispatch for coding tasks (subagent does *not* commit; main agent merges + verifies)
 
 ## Why this exists
 
@@ -28,9 +28,15 @@ This repo treats a **Git repo as a persistent state machine** and enforces:
 
 ## Install (local)
 
-Copy the skill folders into your agent’s skills directory.
+### Option A (recommended): installer script
 
-Example (OpenClaw per-agent workspace):
+```bash
+bash scripts/install_skills.sh --agent <agent-id>
+# optional:
+bash scripts/install_skills.sh --agent <agent-id> --with-subagent-lite
+```
+
+### Option B: manual copy
 
 ```bash
 cp -a dev-project-autoloop dev-project-harness-loop project-harness-guards \
@@ -40,6 +46,17 @@ cp -a dev-project-autoloop dev-project-harness-loop project-harness-guards \
 cp -a subagent-coding-lite \
   ~/.openclaw/agents/<agent-id>/workspace/skills/
 ```
+
+## Guard scripts (in your target project repo)
+
+When `project-harness-guards` is installed into a target project repo (under `scripts/`):
+
+- Drift check:
+  - `bash scripts/run_drift_check.sh`
+  - or `bash scripts/run_drift_check.sh <project-root>`
+- Change guard:
+  - `bash scripts/run_change_guard.sh`
+  - or `bash scripts/run_change_guard.sh <project-root> --test "<cmd>"`
 
 ## License
 

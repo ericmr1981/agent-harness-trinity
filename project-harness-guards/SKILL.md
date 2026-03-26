@@ -57,7 +57,7 @@ Copy these scripts into the project repo at `scripts/`:
 
 Then enforce:
 - after every meaningful change: update progress log + commit
-- before any milestone claim: run `bash scripts/run_change_guard.sh`
+- before any milestone claim: run `bash scripts/run_change_guard.sh` (optionally: `bash scripts/run_change_guard.sh <project-root>`)
 
 ## Guard semantics
 

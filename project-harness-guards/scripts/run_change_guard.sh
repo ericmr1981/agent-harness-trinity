@@ -2,14 +2,46 @@
 set -euo pipefail
 
 # Change guard: drift check + run best available test command.
-# Usage: bash run_change_guard.sh [--test "<cmd>"]
+# Usage:
+#   bash scripts/run_change_guard.sh [<project-root>] [--test "<cmd>"]
+#
+# Examples:
+#   bash scripts/run_change_guard.sh
+#   bash scripts/run_change_guard.sh .
+#   bash scripts/run_change_guard.sh /path/to/repo --test "pnpm test"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT="$DEFAULT_ROOT"
 TEST_CMD=""
-if [[ "${1:-}" == "--test" ]]; then
-  TEST_CMD="${2:-}"
+
+# Parse args (order-independent; first non-flag arg becomes ROOT).
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --test)
+      TEST_CMD="${2:-}"
+      shift 2
+      ;;
+    --help|-h)
+      echo "Usage: bash scripts/run_change_guard.sh [<project-root>] [--test \"<cmd>\"]"
+      exit 0
+      ;;
+    *)
+      ROOT="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ ! -d "$ROOT" ]]; then
+  echo "[FAIL] project root not found: $ROOT"
+  exit 2
 fi
 
-bash "$(dirname "$0")/run_drift_check.sh"
+# Always run drift check from the same copied script set.
+bash "$SCRIPT_DIR/run_drift_check.sh" "$ROOT"
+
+cd "$ROOT"
 
 # Discover test command.
 if [[ -z "$TEST_CMD" && -f "harness.json" ]]; then
@@ -37,7 +69,7 @@ if [[ -z "$TEST_CMD" ]]; then
 fi
 
 if [[ -z "$TEST_CMD" ]]; then
-  echo "[WARN] no testCommand found. Set harness.json:testCommand or pass --test <cmd>."
+  echo "[WARN] no testCommand found. Set harness.json:testCommand or pass --test \"<cmd>\"."
   echo "[OK] change guard (no tests run)"
   exit 0
 fi
