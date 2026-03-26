@@ -1,0 +1,38 @@
+name: harness-guards
+
+on:
+  pull_request:
+
+jobs:
+  project-record-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine changed files
+        id: changes
+        run: |
+          git fetch --no-tags --prune --depth=50 origin +refs/heads/*:refs/remotes/origin/*
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$base" "$head" > changed.txt
+          echo "changed<<EOF" >> $GITHUB_OUTPUT
+          cat changed.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Require ProjectTasks update when code/config/scripts change
+        run: |
+          set -euo pipefail
+          changed="${{ steps.changes.outputs.changed }}"
+          echo "$changed" | sed '/^$/d' > changed.txt
+
+          # If any of these change, ProjectTasks.md must be updated in the same PR
+          if grep -E '\.(py|ts|js|yaml|yml)$|^scripts/|^cron/' changed.txt >/dev/null; then
+            if ! grep -E '(^|/)ProjectTasks\.md$' changed.txt >/dev/null; then
+              echo "ERROR: code/config/scripts changed but ProjectTasks.md not updated"
+              echo "Changed files:"; cat changed.txt
+              exit 1
+            fi
+          fi
+
+          echo "OK"

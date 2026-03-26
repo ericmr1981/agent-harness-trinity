@@ -32,7 +32,7 @@ Minimum expected files (repo-local unless explicitly external):
 If governance docs live outside the repo (e.g., Obsidian), add a pointer file:
 - `HARNESS_LINKS.md` — repo ↔ record-root mapping
 
-## Primary workflow
+## Primary workflow (repo-first)
 
 ### 1) Scaffold or upgrade
 
@@ -68,9 +68,25 @@ If a guard fails:
 - fix it, or
 - explicitly record the risk acceptance in the progress log (never silently ignore).
 
+## Optional: external record-root governance pack (Obsidian-style)
+
+If you maintain a separate “project record root” outside the repo (commonly an Obsidian
+project directory with `Map.md`, `ProjectTasks.md`, `Harness_DoD.md`, `Summary.md`), use the
+bundled **record-root pack** in:
+
+- `record-root-pack/`
+
+It includes:
+- `record-root-pack/scripts/upgrade_existing_project.sh <record-root>`
+- `record-root-pack/scripts/scaffold_project_harness.sh <record-root>`
+- `record-root-pack/scripts/run_change_guard.sh <record-root>`
+
+This pack is intentionally optional so the core Trinity stays repo-first.
+
 ## References
 
 Read when you need details:
 - `references/anthropic-effective-harnesses-mapping.md` (Anthropic 编排 → 三技能家族落地对照卡)
 - `references/harness-layout.md`
 - `references/task-log-format.md`
+- `record-root-pack/references/*` (GitHub gates, summary style, script notes, agent contract)
