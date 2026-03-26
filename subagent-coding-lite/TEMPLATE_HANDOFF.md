@@ -11,6 +11,9 @@
 - `...`
 - `...`
 
+## Artifacts / logs (if any)
+- `artifacts/...` (brief description)
+
 ## How to verify quickly (for main agent)
 1) 
 2) 

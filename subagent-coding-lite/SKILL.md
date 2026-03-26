@@ -16,6 +16,8 @@ Goal: use OpenClaw subagents to accelerate coding work **without weakening** the
 - **Main agent owns the merge step:** final verification, guard runs, commit message discipline, and logging.
 - **Default acceptance (P0):** lint + typecheck + unit tests (if present) + minimal manual check.
 - **Escalate to P1 (add one critical e2e) when risk is high** (auth, permissions, payments, data writes, routing/state core).
+- **Context protection:** subagent absorbs high-volume tool output; main agent keeps the primary context clean.
+- **Log hygiene:** if command output is long, write it to `artifacts/` (or similar) and return only a short excerpt + file path.
 
 ## When to use
 

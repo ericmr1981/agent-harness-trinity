@@ -69,6 +69,17 @@ The repo must contain the durable record:
 
 (Do not rely on chat history to remember what happened.)
 
+### Noise isolation rule (subagent to protect context)
+
+Long-running work often fails because tool output (build logs, stack traces, e2e output) fills the main context window.
+
+Default strategy:
+- Use a **subagent** (see `subagent-coding-lite`) for high-output rounds (build/test/e2e, heavy grep, repeated trial-and-error).
+- The main agent stays as the **orchestrator**: chooses the bet, sets acceptance oracles, and does final verification + guards + commit/log.
+
+Hard requirement:
+- Any long output should be written to repo files (suggested: `artifacts/`), and the user-facing summary/`CHANGELOG.md` should only link to those files + include a short excerpt.
+
 ## Step 5) Guard before milestone claims
 
 Before claiming a milestone/completion:
