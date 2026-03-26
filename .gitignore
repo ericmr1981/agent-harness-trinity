@@ -1,2 +1,6 @@
 .DS_Store
 *.skill
+
+# Python
+__pycache__/
+*.pyc
