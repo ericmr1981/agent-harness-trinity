@@ -1,6 +1,6 @@
 # <ProjectName> — Summary
 
-> 目标：像 `/Users/ericmr/Documents/GitHub/Obsidian/项目/oa-cli 分析/Summary.md` 一样，做到：
+> 目标：像你本地 Obsidian 项目记录里的 `Summary.md` 一样，做到：
 > - 一屏看懂：目标/现状/机制
 > - 可导航：目录结构清晰、入口明确
 > - 可验收：关键口径/不变量/验证方式写明
@@ -92,7 +92,7 @@
 
 ## 📁 项目目录与关键路径（链接/绝对路径）
 
-- Project record root（Obsidian）：`/Users/ericmr/Documents/GitHub/Obsidian/项目/<ProjectName>`
+- Project record root（Obsidian）：`<ObsidianVault>/项目/<ProjectName>`
 - Code repo：<path or URL>
 - Runtime/Outputs：<path>
 

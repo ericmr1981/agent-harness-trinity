@@ -23,7 +23,8 @@ ROOT="$(cd "$ROOT" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$ROOT/.harness-backup-$STAMP"
 
-TEMPLATE="/Users/ericmr/.openclaw/agents/jarvis/workspace/skills/project-harness-guards/assets/templates/pretty_summary_template.md"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATE="$SCRIPT_DIR/../assets/templates/pretty_summary_template.md"
 TARGET="$ROOT/Summary.md"
 
 mkdir -p "$ROOT"
