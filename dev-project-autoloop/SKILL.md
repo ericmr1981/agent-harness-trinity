@@ -1,6 +1,6 @@
 ---
 name: dev-project-autoloop
-description: Run a software development project as an autonomous goal loop. Use when the user wants the agent to own progress on a coding project, iterate in bounded reversible bets, verify with real oracles, commit/log each step for resumability, and continue without asking after every micro-step. Prefer dev-project-harness-loop when the project also needs durable harness records and guardrails.
+description: Run a software development project as an autonomous goal loop. Use when the user wants the agent to own progress on a coding project, iterate in bounded reversible bets, verify with real oracles, commit/log each step for resumability, and continue without asking after every micro-step. Prefer dev-project-harness-loop when the project also needs durable harness records, explicit contracts, or guardrails.
 ---
 
 # Dev Project Autoloop
@@ -9,9 +9,11 @@ Run a project as a **bounded bet loop** that is resumable across context windows
 
 ## Default posture
 
-- Treat the **repo state** as truth (not chat memory).
+- Treat the **repo state** as truth, not chat memory.
+- Treat the **final goal** as the default stop point, not the end of a subtask.
 - Treat **verification oracles** as the judge.
 - Treat **git commits** as save points.
+- Interrupt the human only for: blocker, approval boundary, major pivot, or milestone-ready result.
 
 ## Startup protocol (every session)
 
@@ -20,7 +22,7 @@ Run a project as a **bounded bet loop** that is resumable across context windows
    - `git log -n 20 --oneline` (or equivalent)
    - progress log: `CHANGELOG.md` / `claude-progress.txt`
    - if present: `features.json` (what is still `passes=false`)
-3) Establish the project frame (briefly): target, acceptance oracle(s), non-goals, stop conditions.
+3) Establish the project frame (briefly): target, acceptance oracle(s), non-goals, stop conditions, approval boundaries.
 
 ## The loop (repeat)
 
@@ -28,7 +30,7 @@ Run a project as a **bounded bet loop** that is resumable across context windows
 Capture: branch/status + current failing behavior + current test/e2e signal.
 
 ### 1) Pick one bounded bet
-One coherent change that can be verified quickly.
+Choose the unfinished task that most directly reduces distance to the final goal.
 
 ### 2) Implement
 Prefer small, reviewable diffs.
@@ -51,6 +53,15 @@ After each meaningful bet:
 
 If you do not have a harness, create a lightweight `RUNLOG.md`.
 If you do have a harness, prefer `CHANGELOG.md` + `features.json`.
+
+### 6) Reconcile
+After each round, update your view of the project:
+- what is now complete
+- what remains unfinished
+- what new evidence changed the next-best task
+- whether you should continue immediately
+
+If meaningful unfinished work remains and no blocker / approval boundary exists, start the next bounded round without asking.
 
 ## “Ralph loop” (anti false-completion)
 

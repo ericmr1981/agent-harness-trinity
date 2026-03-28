@@ -5,30 +5,26 @@ Recommended path: `harness/handoff.md`
 ---
 
 ## Why handoff
-- context reset | model/session change | stalled loop | other:
+- context reset | model/session change | stalled loop | subagent return | other:
 
-## Current state
+## Goal + current state
+- goal contract: `harness/goal.md`
 - repo status (branch, dirty/clean):
 - last known good commit:
 - what currently passes:
 - what currently fails:
 
-## What changed in the last round
-- 
+## Facts
+- what changed in the last round:
+- durable artifacts updated:
+- key evidence paths:
 
-## Evidence
-- L1:
-- L2:
-- guard:
-- key artifacts:
+## Assessment
+- current verdict: PASS | FAIL | PARTIAL
+- open issues / blockers:
+- residual risks:
 
-## Open issues / blockers
-- 
-
-## Next bet (do next)
-1.
-2.
-3.
-
-## Constraints / do-not-do
-- 
+## Recommendation
+- next bounded bet:
+- why this is the next-best task:
+- do-not-do / constraints:

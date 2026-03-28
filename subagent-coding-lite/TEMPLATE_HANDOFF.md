@@ -1,53 +1,52 @@
 # Subagent Coding Lite — Handoff Packet
 
 ## Role + status
-- Role: `planner` | `generator` | `evaluator`
+- Role: `planner` | `builder` | `verifier` | `researcher`
 - Status: done | partial | blocked
 
-## Harness pointers (if applicable)
+## Goal / contract pointers
+- Goal: `harness/goal.md`
 - Spec: `harness/spec.md` (if used)
 - Contract: `harness/contracts/<sprint-id>.md` (if applicable)
-- QA report: `harness/qa/<sprint-id>.md` (if role=`evaluator`)
+- QA report: `harness/qa/<sprint-id>.md` (if role=`verifier`)
 
-## What is done
+## Facts
+### What is done
 - 
 
-## What is NOT done
+### What is NOT done
 - 
 
-## What changed (high signal)
+### What changed (high signal)
 - 
 
-## Files changed
+### Files changed
 - 
 
-## Commands run (verification)
+## Verification
+### Commands run
 - `...`
 - `...`
 
-## Evidence / artifacts
+### Evidence / artifacts
 - `artifacts/...` (brief description)
 
-## How to verify quickly (for main agent)
+### How to verify quickly (for main agent)
 1) 
 2) 
 
-## Findings (if evaluator)
-- Verdict: PASS / FAIL
-- Top 3 blockers (if FAIL):
-  1)
-  2)
-  3)
+## Assessment
+- Current verdict: PASS | FAIL | PARTIAL
+- Risks / edge cases:
+- Confidence level:
 
-## Risks / edge cases
-- 
-
-## Next 3 steps
+## Recommendation
+### Next 3 steps
 1) 
 2) 
 3) 
 
-## If you need a decision from Boss
+### If you need a decision from Boss
 - Decision needed:
 - Options:
 - Recommendation:

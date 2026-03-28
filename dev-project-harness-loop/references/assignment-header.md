@@ -1,106 +1,112 @@
 # Assignment Header for Dev Project Harness Loop
 
-Use this header when delegating a project task to a coding agent, ACP session, sub-agent, or ClawTeam worker.
+Use this header when delegating a bounded round to a coding agent, ACP session, OpenClaw subagent, or ClawTeam worker.
 
-The goal is to make assignment quality high enough that the agent can operate autonomously **without drifting**.
+The goal is to make the assignment precise enough that the worker can operate autonomously **without drifting** and return evidence that is easy to merge back into the main loop.
+
+## Core rule
+
+- **Messages notify. Artifacts decide.**
+- The worker should receive the assignment in message form, but truth must live in repo artifacts.
 
 ## Assignment structure
 
-### 1) Mission
+### 1) Role
+- Role: `planner` | `builder` | `verifier` | `researcher`
+- Why this role was chosen now:
+
+### 2) Mission
 - Project:
+- Round / sprint id:
 - Objective:
 - Why this matters now:
-- Mode: `feature` | `bugfix` | `refactor`
 - Harness profile: `Solo` | `PG` | `PGE-final` | `PGE-sprint`
 
-### 2) Contract-first (required)
-Before writing code, create a **Sprint Contract** that makes “done” testable.
+### 3) Goal + contract pointers
+- Goal contract: `harness/goal.md`
+- Spec (if used): `harness/spec.md`
+- Sprint contract: `harness/contracts/<sprint-id>.md`
+- Prior QA / handoff (if relevant):
 
-- Recommended: create `harness/contracts/<sprint-id>.md`
-- Use template: `references/sprint-contract-template.md`
+If the contract is missing or not testable, stop and request a contract fix instead of guessing done.
 
-If an Evaluator role is used, the evaluator must review the contract and require fixes before implementation begins.
-
-### 3) Acceptance target
-- Done means (observable outcomes):
-- Required checks (L1):
-- User scenarios (L2 Web UI): at least 2 (happy path + edge/permission/error)
-  - scenario steps:
-  - expected result:
-- Change → Acceptance coverage map (each change item maps to verification + evidence):
-- Evidence required in final response:
-
-### 4) Harness artifacts (required)
-- `harness/spec.md` (if planner expanded the prompt)
-- `harness/contracts/<sprint-id>.md`
-- `harness/qa/<sprint-id>.md` (if evaluator exists; template: `references/qa-report-template.md`)
-- `harness/handoff.md` (only if doing a context reset / session handoff)
-- `artifacts/` for long logs, screenshots, traces
-
-### 5) Read first
-- `Map.md`
-- `Harness_DoD.md`
-- `ProjectTasks.md`
-- additional repo files as needed
-
-### 6) Scope and constraints
-- In scope files/dirs:
+### 4) Scope and constraints
+- In scope files / dirs:
 - Out of scope:
 - Non-goals:
-- Do not perform without approval:
+- Approval boundaries to respect:
 
-### 7) Execution rules
-- Work in bounded reversible iterations
-- Prefer simple diffs
-- After each meaningful change, update repo-local execution docs (for example `docs/RUNLOG.md`, `docs/NEXT.md`, or the repo-local task log)
-- If the assignment explicitly includes a repo-local `ProjectTasks.md`, update it too
-- Keep / rework / revert after verification
-- Do not claim done without guard evidence
+### 5) Capabilities
+State explicitly what the worker may do.
 
-### 8) Guard and evidence rules
-Before claiming a milestone or completion:
-- run `bash scripts/run_change_guard.sh "<project-record-root>"`
-- include the raw guard output (or store long output under `artifacts/` and link it)
-- include the new `ProjectTasks.md` log entry
-- include verification results
+- Allowed tools / actions:
+- Allowed code changes:
+- Allowed verification commands:
+- May browse / research externally: yes | no
+- May edit product code: yes | no
+- May edit harness docs: yes | no
+- Must NOT commit / push / change remote state unless explicitly allowed
 
-### 9) Stop conditions
+### 6) Acceptance target
+- Done means (observable outcomes):
+- Required checks (L1):
+- User scenarios (L2): at least happy path + edge/error when user-visible
+- Evidence required in final response:
+
+### 7) Output contract
+Return:
+- files changed + why
+- key diff summary
+- verification evidence
+- artifacts paths
+- residual risks
+- next-step recommendation
+
+### 8) Escalation rule
 Pause and escalate if:
-- destructive action is needed
-- credentials/billing/external side effects are required
-- product choices are ambiguous
+- approval boundary is hit
+- product direction is ambiguous
 - repeated attempts fail without new evidence
-
-### 10) Final response format
-- Change summary
-- Contract link + any contract deltas
-- Verification summary:
-  - L1 (engineering checks)
-  - L2 (user scenarios) + outcome
-- Evaluator verdict (PASS/FAIL) + top findings (if evaluator exists)
-- Change → Acceptance coverage map (brief)
-- Keep / rework / revert decision
-- Guard output
-- `ProjectTasks.md` excerpt
-- Residual risk / next step
+- the contract conflicts with repo reality
 
 ## Short assignment template
 
 ```md
+# Role
+Role: <planner|builder|verifier|researcher>
+Why now: <why this role is needed>
+
 # Mission
 Project: <name>
-Objective: <specific target>
-Mode: <feature|bugfix|refactor>
+Round: <id>
+Objective: <bounded target>
 Harness profile: <Solo|PG|PGE-final|PGE-sprint>
-Why now: <business or delivery reason>
 
-# Contract-first
-Create: harness/contracts/<sprint-id>.md
-- scope (in/out/non-goals)
-- acceptance criteria (numbered)
-- verification plan (L1 + L2 scenarios)
-- evidence locations (artifacts/)
-- pass/fail thresholds (rubric)
+# Goal + Contract Pointers
+- Goal: harness/goal.md
+- Spec: harness/spec.md
+- Contract: harness/contracts/<sprint-id>.md
+- Prior QA/Handoff: <paths>
+
+# Scope
+In scope:
+- <paths>
+Out of scope:
+- <paths>
+Non-goals:
+- <explicit exclusions>
+Approval boundaries:
+- <actions that require escalation>
+
+# Capabilities
+Allowed tools/actions:
+- <tools>
+May browse externally: <yes|no>
+May edit product code: <yes|no>
+May edit harness docs: <yes|no>
+Must not:
+- git commit / git push / PR / remote changes
+- scope expansion beyond contract
 
 # Acceptance
 Done means:
@@ -110,53 +116,29 @@ Done means:
 Required checks (L1):
 - <lint/test/build>
 
-User scenarios (L2 Web UI):
+User scenarios (L2):
 - Scenario A (happy path):
-  - Steps: <click-by-click>
-  - Expect: <what user sees>
-- Scenario B (edge/permission/error):
-  - Steps: <click-by-click>
-  - Expect: <what user sees>
+  - Steps:
+  - Expect:
+- Scenario B (edge/error):
+  - Steps:
+  - Expect:
 
-Change → Acceptance coverage map:
-- Change item 1:
-  - Verified by: <L1 check + L2 scenario>
-  - Evidence: <screenshot/log/artifact>
+Evidence required:
+- <logs/screenshots/paths>
 
-# Harness artifacts
-- harness/spec.md (if planner used)
-- harness/contracts/<sprint-id>.md
-- harness/qa/<sprint-id>.md (if evaluator used)
-- artifacts/ (logs/screenshots/traces)
+# Output Contract
+Return:
+- files changed + why
+- verification evidence
+- artifacts paths
+- residual risks
+- next-step recommendation
 
-# Read first
-- Map.md
-- Harness_DoD.md
-- ProjectTasks.md
-
-# Scope
-In scope:
-- <paths>
-Out of scope:
-- <paths/choices>
-Non-goals:
-- <explicit exclusions>
-
-# Execution Rules
-- Work in bounded reversible iterations
-- Prefer simple diffs
-- Update ProjectTasks.md after each meaningful change
-- Do not claim done without guard evidence
-
-# Final Response
-Include:
-- change summary
-- contract link
-- verification summary
-- evaluator verdict (if applicable)
-- raw guard output
-- ProjectTasks.md excerpt
-- residual risk / next step
+# Escalate If
+- approval boundary hit
+- contract missing / ambiguous
+- repeated attempts fail without new evidence
 ```
 
 ## Writing style rules
@@ -165,12 +147,12 @@ A good assignment header is:
 - concrete
 - bounded
 - acceptance-first
-- contract-first
+- capability-explicit
 - evidence-first
 
 A bad assignment header is:
 - broad and motivational
 - missing scope limits
 - missing verification requirements
-- missing an explicit contract
-- missing evidence contract
+- missing explicit capability boundaries
+- missing an evidence contract

@@ -44,23 +44,27 @@ backup_if_exists() {
 }
 
 # Backup key docs if they exist
-for f in Map.md ProjectTasks.md Summary.md Readme.md Invariants.md Harness_DoD.md Runbook.md Doc_Gardening.md; do
+for f in Goal.md Map.md ProjectTasks.md Handoff.md Summary.md Readme.md Invariants.md Harness_DoD.md Runbook.md Doc_Gardening.md; do
   backup_if_exists "$ROOT/$f"
 done
 
 # Ensure minimum required docs exist
-default_if_missing "$ROOT/Map.md" "# Project Map\n\n- Goal:\n- Key paths:\n- How to verify:\n- Guard commands:\n  - bash scripts/run_change_guard.sh\n"
+default_if_missing "$ROOT/Goal.md" "# Goal\n\n## Final goal\n- TODO\n\n## Non-goals\n- TODO\n\n## Approval boundaries\n- Deployment / destructive actions\n- Credentials / billing / external side effects\n- Product direction pivots\n"
+
+default_if_missing "$ROOT/Map.md" "# Project Map\n\n- Goal: see Goal.md\n- Key paths:\n- How to verify:\n- Guard commands:\n  - bash scripts/run_change_guard.sh\n"
 
 default_if_missing "$ROOT/ProjectTasks.md" "# ProjectTasks\n\n## Tasks\n\n## Acceptance / DoD\n\n## Change Log\n\n| Date | Change | Verification |\n|------|--------|--------------|\n"
 
-default_if_missing "$ROOT/Summary.md" "# <ProjectName> — Summary\n\n> 建议使用 project-harness-guards 的 pretty summary 模板（类似 oa-cli 项目的 Summary）。\n> 可运行：`bash scripts/standardize_summary.sh \".\"`\n\n## 📋 项目概述\n\n(一句话 + 核心价值 + 当前状态)\n"
+default_if_missing "$ROOT/Handoff.md" "# Handoff\n\n## Current state\n- What currently passes:\n- What currently fails:\n\n## Evidence\n- Guard output:\n- Key artifacts:\n\n## Next best task\n1.\n2.\n3.\n"
 
-default_if_missing "$ROOT/Readme.md" "# Readme\n\nThis directory is the single source of truth for project status, decisions, verification, and links.\n\nStart here: Map.md\n"
+default_if_missing "$ROOT/Summary.md" "# <ProjectName> — Summary\n\n> 建议使用 project-harness-guards 的 pretty summary 模板（类似 oa-cli 项目的 Summary）。\n> 可运行：\`bash scripts/standardize_summary.sh \".\"\`\n\n## 📋 项目概述\n\n(一句话 + 核心价值 + 当前状态)\n"
+
+default_if_missing "$ROOT/Readme.md" "# Readme\n\nThis directory is the single source of truth for project status, decisions, verification, and links.\n\nStart here: Goal.md → Map.md → ProjectTasks.md\n"
 
 # Recommended harness set (create if missing)
 default_if_missing "$ROOT/Invariants.md" "# Invariants\n\n- Non-negotiable rules.\n"
 
-default_if_missing "$ROOT/Harness_DoD.md" "# Harness DoD\n\n- Any change must update ProjectTasks change log with: what changed + verification method + result.\n- Preferred (non-PR/direct-edit): bash scripts/run_change_guard.sh\n- Minimum: bash scripts/run_drift_check.sh\n"
+default_if_missing "$ROOT/Harness_DoD.md" "# Harness DoD\n\n- Any change must update ProjectTasks change log with: what changed + verification method + result.\n- Preferred (non-PR/direct-edit): bash scripts/run_change_guard.sh\n- Minimum: bash scripts/run_drift_check.sh\n- Default reporting mode: milestone-only unless blocker / approval boundary / major pivot.\n"
 
 default_if_missing "$ROOT/Runbook.md" "# Runbook\n\n- SOP for triage/repair.\n"
 
@@ -86,7 +90,7 @@ if [[ -f "$PT" ]]; then
     # Try to append a table header if it's missing
     printf "\n| Date | Change | Verification |\n|------|--------|--------------|\n" >> "$PT"
   fi
-  printf "| %s | Standardize project to harness-guards (install/refresh scripts + docs) | Planned: run_change_guard.sh |\n" "$NOW" >> "$PT"
+  printf "| %s | Standardize project to harness-guards (install/refresh scripts + docs, add Goal/Handoff if missing) | Planned: run_change_guard.sh |\n" "$NOW" >> "$PT"
 fi
 
 echo

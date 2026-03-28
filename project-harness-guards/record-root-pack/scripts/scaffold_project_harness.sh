@@ -14,10 +14,25 @@ ROOT="$1"
 mkdir -p "$ROOT"
 
 # Create minimal docs if missing
+[[ -f "$ROOT/Goal.md" ]] || cat > "$ROOT/Goal.md" <<'EOF'
+# Goal
+
+## Final goal
+- TODO
+
+## Non-goals
+- TODO
+
+## Approval boundaries
+- Deployment / destructive actions
+- Credentials / billing / external side effects
+- Product direction pivots
+EOF
+
 [[ -f "$ROOT/Map.md" ]] || cat > "$ROOT/Map.md" <<'EOF'
 # Project Map
 
-- Goal:
+- Goal: see Goal.md
 - Key paths:
 - How to verify:
 - Guard commands:
@@ -35,6 +50,23 @@ EOF
 
 | Date | Change | Verification |
 |------|--------|--------------|
+EOF
+
+[[ -f "$ROOT/Handoff.md" ]] || cat > "$ROOT/Handoff.md" <<'EOF'
+# Handoff
+
+## Current state
+- What currently passes:
+- What currently fails:
+
+## Evidence
+- Guard output:
+- Key artifacts:
+
+## Next best task
+1.
+2.
+3.
 EOF
 
 [[ -f "$ROOT/Summary.md" ]] || cat > "$ROOT/Summary.md" <<'EOF'
@@ -67,6 +99,7 @@ EOF
 
 - Every change must update ProjectTasks change log with: what changed + verification method + result.
 - Preferred: bash scripts/run_change_guard.sh
+- Default reporting mode: milestone-only unless blocker / approval boundary / major pivot.
 EOF
 
 [[ -f "$ROOT/Runbook.md" ]] || cat > "$ROOT/Runbook.md" <<'EOF'

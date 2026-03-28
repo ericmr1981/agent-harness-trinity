@@ -6,10 +6,10 @@ It bundles three OpenClaw skills that form a single “execution + governance”
 
 - **dev-project-autoloop** — bounded-bet execution loop (commit/log/oracle-first)
 - **project-harness-guards** — agent-first repo scaffolding + drift/change guards
-- **dev-project-harness-loop** — the combined operating system (autoloop + guards)
+- **dev-project-harness-loop** — the combined operating system (autoloop + guards + contract-first governance)
 
 Optional extension (does not change the core design):
-- **subagent-coding-lite** — lightweight subagent dispatch for coding tasks (subagent does *not* commit; main agent merges + verifies)
+- **subagent-coding-lite** — lightweight subagent dispatch with standardized assignment, handoff, and verification contracts
 
 ## Why this exists
 
@@ -18,6 +18,7 @@ Long tasks fail in practice because progress is not:
 - resumable (state not persisted)
 - verifiable (no oracle)
 - reversible (no safe save points)
+- goal-closed (work stops at a phase boundary instead of the final objective)
 
 This repo treats a **Git repo as a persistent state machine** and enforces:
 
@@ -25,6 +26,15 @@ This repo treats a **Git repo as a persistent state machine** and enforces:
 - explicit verification oracles
 - commit-linked progress logs
 - guard scripts before milestone claims
+- structured artifacts for planner / builder / verifier handoff
+- milestone-only human interruption by default
+
+## Design stance
+
+- **Final goal is the default stop point.** Do not pause just because a subtask finished.
+- **Conversation is for orchestration; artifacts are for truth.**
+- **Verification beats optimism.** Builder does not self-accept.
+- **Subagents are execution workers, not autonomous governors.** Main agent owns final verification, guards, commit discipline, and durable records.
 
 ## Install (local)
 
@@ -57,6 +67,28 @@ When `project-harness-guards` is installed into a target project repo (under `sc
 - Change guard:
   - `bash scripts/run_change_guard.sh`
   - or `bash scripts/run_change_guard.sh <project-root> --test "<cmd>"`
+
+## Core artifacts (recommended)
+
+- `harness/goal.md` — final goal, non-goals, constraints, approval boundaries
+- `harness/spec.md` — expanded product / implementation spec when planning is needed
+- `harness/contracts/<sprint-id>.md` — sprint contract / definition of done
+- `harness/assignments/<round-id>.md` — standardized assignment brief
+- `harness/qa/<sprint-id>.md` — evaluator / verifier report
+- `harness/handoff.md` — short session/subagent handoff
+- `artifacts/` — long logs, screenshots, traces
+
+## Minimal operating flow
+
+1. Write `harness/goal.md`
+2. Choose a profile (`Solo` / `PG` / `PGE-final` / `PGE-sprint`)
+3. Create `harness/contracts/<sprint-id>.md`
+4. Dispatch a bounded round with `harness/assignments/<round-id>.md`
+5. Builder returns evidence + handoff
+6. Verifier writes `harness/qa/<sprint-id>.md`
+7. Planner reconciles and continues unless blocked
+
+See: `dev-project-harness-loop/references/minimal-flow-example.md`
 
 ## License
 

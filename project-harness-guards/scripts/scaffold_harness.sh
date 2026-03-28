@@ -61,6 +61,11 @@ write_file "CLAUDE.md" <<'EOF'
 ## Constraints
 - Keep changes bounded and reversible
 - Do not claim done without verification evidence
+
+## Approval boundaries
+- Deployment / destructive actions
+- Credentials / billing / external side effects
+- Product direction pivots
 EOF
 
 write_file "AGENTS.md" <<'EOF'
@@ -70,6 +75,7 @@ Keep this file short (~100 lines).
 
 ## Where to look
 - Mission + global rules: CLAUDE.md
+- Goal contract: harness/goal.md
 - Current progress: CHANGELOG.md
 - Structured checklist: features.json
 - Bootstrap: init.sh
@@ -77,10 +83,11 @@ Keep this file short (~100 lines).
 - Quality/tech debt: docs/quality.md
 
 ## Default loop
-1) Read CLAUDE.md + CHANGELOG.md
-2) Pick one bounded bet
+1) Read CLAUDE.md + harness/goal.md + CHANGELOG.md
+2) Pick one bounded bet that most reduces distance to the final goal
 3) Implement + verify
 4) Commit + log (include commit hash)
+5) Continue unless blocker / approval boundary / major pivot
 EOF
 
 write_file "CHANGELOG.md" <<'EOF'
@@ -118,6 +125,58 @@ Fill this only if you keep governance docs outside the repo (e.g. Obsidian).
 - externalRecordRoot: <optional>
 EOF
 
+write_file "harness/goal.md" <<'EOF'
+# Goal Contract
+
+## Final goal
+- TODO
+
+## Deliverable shape
+- User-visible outcome:
+- Technical outcome:
+- Required evidence:
+
+## Non-goals
+- TODO
+
+## Constraints
+- TODO
+
+## Approval boundaries
+- Deployment / destructive actions
+- Credentials / billing / external side effects
+- Product direction pivots
+
+## Reporting mode
+- milestone-only
+
+## Stop conditions
+- Done when:
+- Blocked when:
+- Escalate when:
+EOF
+
+write_file "harness/handoff.md" <<'EOF'
+# Handoff
+
+## Why handoff
+- context reset | session change | subagent return | other:
+
+## Current state
+- repo status:
+- last known good commit:
+- what currently passes:
+- what currently fails:
+
+## Evidence
+- key artifacts:
+
+## Next bet
+1.
+2.
+3.
+EOF
+
 write_file "docs/architecture.md" <<'EOF'
 # Architecture rules
 
@@ -142,7 +201,7 @@ EOF
 
 chmod +x init.sh || true
 
-mkdir -p scripts tests plans
+mkdir -p scripts tests plans harness/contracts harness/assignments harness/qa artifacts/screenshots artifacts/traces
 
 if [[ "$INSTALL_GUARDS" -eq 1 ]]; then
   write_file "scripts/run_drift_check.sh" <<'EOF'
@@ -181,6 +240,10 @@ fi
 
 if [[ ! -f "harness.json" ]]; then
   echo "[WARN] missing: harness.json (recommended: set initCommand/testCommand/e2eCommand)"
+fi
+
+if [[ ! -f "harness/goal.md" ]]; then
+  echo "[WARN] missing: harness/goal.md (recommended: define final goal, non-goals, constraints, approval boundaries)"
 fi
 
 LOG_FILE=""
@@ -304,4 +367,4 @@ if [[ ! -f "scripts/run_drift_check.sh" ]]; then
   echo "       or re-run with --install-guards"
 fi
 
-echo "Done. Next: fill CLAUDE.md acceptance + harness.json commands, then add a runnable test oracle."
+echo "Done. Next: fill CLAUDE.md + harness/goal.md, set harness.json commands, then add a runnable test oracle."

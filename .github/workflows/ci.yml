@@ -25,6 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for d in dev-project-autoloop project-harness-guards dev-project-harness-loop; do
+          for d in dev-project-autoloop project-harness-guards dev-project-harness-loop subagent-coding-lite; do
             test -f "$d/SKILL.md"
           done
+          test -f subagent-coding-lite/references/role-charters.md
