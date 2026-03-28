@@ -1,22 +1,43 @@
 # Subagent Coding Lite — Handoff Packet
 
-## Status
-- What is done:
-- What is NOT done:
+## Role + status
+- Role: `planner` | `generator` | `evaluator`
+- Status: done | partial | blocked
+
+## Harness pointers (if applicable)
+- Spec: `harness/spec.md` (if used)
+- Contract: `harness/contracts/<sprint-id>.md` (if applicable)
+- QA report: `harness/qa/<sprint-id>.md` (if role=`evaluator`)
+
+## What is done
+- 
+
+## What is NOT done
+- 
 
 ## What changed (high signal)
+- 
+
+## Files changed
 - 
 
 ## Commands run (verification)
 - `...`
 - `...`
 
-## Artifacts / logs (if any)
+## Evidence / artifacts
 - `artifacts/...` (brief description)
 
 ## How to verify quickly (for main agent)
 1) 
 2) 
+
+## Findings (if evaluator)
+- Verdict: PASS / FAIL
+- Top 3 blockers (if FAIL):
+  1)
+  2)
+  3)
 
 ## Risks / edge cases
 - 

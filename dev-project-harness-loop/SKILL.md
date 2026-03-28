@@ -49,7 +49,48 @@ Define briefly:
 - stop conditions
 - smallest reversible iteration unit
 
-## Step 3) Run bounded autoloop iterations
+### Acceptance discipline (Web UI default)
+
+To prevent “looks done but isn’t user-done”, acceptance must be **two-layered**:
+- **L1 (engineering checks)**: lint/test/build/smoke
+- **L2 (user acceptance)**: simulate real user paths in the Web UI (manual steps or automated e2e)
+
+Minimum L2 requirements (unless explicitly out-of-scope):
+- at least **2 user scenarios**: 1× happy path + 1× edge/permission/error path
+- maintain a short **Change → Acceptance coverage map**
+- evidence must be reproducible: commands + URLs/steps + screenshots/log excerpts (store long output under `artifacts/`)
+
+## Step 2.5) Choose a harness profile (cost-aware)
+
+Use the simplest profile that still meets acceptance.
+
+Profiles:
+- **Solo**: generator only + guards
+- **PG**: planner + generator
+- **PGE-final**: planner + generator + evaluator (evaluator runs once at end)
+- **PGE-sprint**: planner + generator + evaluator per sprint (highest reliability, highest cost)
+
+See: `references/harness-profiles.md`
+
+## Step 3) Contract-first execution (recommended; required for evaluator runs)
+
+Before implementing a chunk, define “done” as a **Sprint Contract**.
+
+Artifacts (recommended paths):
+- contract: `harness/contracts/<sprint-id>.md` (template: `references/sprint-contract-template.md`)
+- evaluator report (if used): `harness/qa/<sprint-id>.md` (template: `references/qa-report-template.md`)
+- handoff (only for context reset / session change): `harness/handoff.md` (template: `references/handoff-template.md`)
+- long logs/screenshots/traces: `artifacts/`
+
+If an evaluator exists, it must:
+- review the contract before coding starts
+- enforce hard thresholds (rubric) and fail the sprint if a critical criterion is below threshold
+
+Rubric examples:
+- `references/rubrics/frontend.md`
+- `references/rubrics/fullstack.md`
+
+## Step 4) Run bounded iterations
 
 Per iteration:
 1) baseline (current failure / current oracle signal)
@@ -58,29 +99,26 @@ Per iteration:
 4) verify (oracle ladder: L0 → L1 → L2)
 5) decide keep / rework / revert
 6) **commit + log** (include commit hash)
-7) update state:
-   - flip `features.json` only after oracle passes
+7) update state (flip `features.json` only after oracle passes)
 
-## Step 4) Record discipline (anti context-loss)
+## Step 5) Record discipline (anti context-loss)
 
 The repo must contain the durable record:
 - `CHANGELOG.md` entry per iteration (include failures)
 - each entry includes `commit: <sha>` and verification result
-
-(Do not rely on chat history to remember what happened.)
 
 ### Noise isolation rule (subagent to protect context)
 
 Long-running work often fails because tool output (build logs, stack traces, e2e output) fills the main context window.
 
 Default strategy:
-- Use a **subagent** (see `subagent-coding-lite`) for high-output rounds (build/test/e2e, heavy grep, repeated trial-and-error).
+- Use a **subagent** (see `subagent-coding-lite`) for high-output rounds.
 - The main agent stays as the **orchestrator**: chooses the bet, sets acceptance oracles, and does final verification + guards + commit/log.
 
 Hard requirement:
-- Any long output should be written to repo files (suggested: `artifacts/`), and the user-facing summary/`CHANGELOG.md` should only link to those files + include a short excerpt.
+- Long output goes under repo files (suggested: `artifacts/`), and the user-facing summary/`CHANGELOG.md` links to it.
 
-## Step 5) Guard before milestone claims
+## Step 6) Guard before milestone claims
 
 Before claiming a milestone/completion:
 - run: `bash scripts/run_change_guard.sh`
@@ -88,22 +126,11 @@ Before claiming a milestone/completion:
 
 If guard fails:
 - fix it, or
-- explicitly record risk acceptance in `CHANGELOG.md` (never ignore).
+- explicitly record risk acceptance in `CHANGELOG.md` (never ignore)
 
-## Step 6) “Ralph loop” completion check
+## Step 7) “Ralph loop” completion check
 
 Even after a guard passes, run the acceptance oracle one more time (especially L2/e2e).
-This is to catch false-positive completion.
-
-## Step 7) Reporting contract (user-facing)
-
-Each bounded round produces:
-- round goal / bet
-- what changed
-- verification result
-- commit hash
-- guard result
-- next bet or blocker
 
 ## Stop conditions
 
@@ -115,4 +142,11 @@ Pause and ask the human if:
 
 ## References
 
+- `references/assignment-header.md` (delegation assignment header: acceptance/contract/evidence-first)
+- `references/harness-profiles.md`
+- `references/sprint-contract-template.md`
+- `references/qa-report-template.md`
+- `references/handoff-template.md`
+- `references/rubrics/frontend.md`
+- `references/rubrics/fullstack.md`
 - `references/anthropic-effective-harnesses-mapping.md` (Anthropic 编排 → 三技能家族落地对照卡)
