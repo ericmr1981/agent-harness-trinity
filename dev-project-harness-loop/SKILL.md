@@ -1,6 +1,6 @@
 ---
 name: dev-project-harness-loop
-description: Run a software development project in goal-closed autonomous mode with harness governance: scaffold or upgrade agent-first repo structure, define a goal contract and sprint contracts, use planner/builder/verifier role separation, require verifiable oracles, and block milestone claims unless change guards pass and durable records are updated. Use when you want the agent to take over a project end-to-end with minimal human interruption but strong auditability and resumability.
+description: Dev project harness loop: contracts, role separation, verifiable oracles, change-guards, durable records. Use when the agent owns a repo end-to-end with auditability.
 ---
 
 # Dev Project Harness Loop

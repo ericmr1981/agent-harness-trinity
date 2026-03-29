@@ -7,6 +7,23 @@ Copy/paste and fill. Keep it tight.
 - Why this role is needed now:
 - Role charter (optional pointer): `references/role-charters.md`
 
+## Agent Profile (Optional — for specialized tasks)
+> Use when the task requires domain expertise (e.g., frontend, backend, security, UX).
+> See: `skills/agency-agents-lib/SKILL.md` for available agents.
+
+- Agent ID: `engineering-frontend-developer` | `engineering-backend-architect` | `design-ui-designer` | ...
+- Agent File: `skills/agency-agents-lib/agents/<category>/<agent>.md`
+- Inject as attachment: `yes` | `no`
+- Why this agent: (brief explanation of why specialized expertise is needed)
+
+**Example:**
+```yaml
+Agent ID: engineering-frontend-developer
+Agent File: skills/agency-agents-lib/agents/engineering/engineering-frontend-developer.md
+Inject as attachment: yes
+Why this agent: Task requires React virtualization expertise for 1000+ row data table
+```
+
 ## Goal
 - Final goal pointer: `harness/goal.md`
 - Bounded mission for this round:
