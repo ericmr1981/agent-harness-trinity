@@ -23,222 +23,54 @@ const WORKSPACE = process.env.OPENCLAW_WORKSPACE || process.cwd();
 const HARNESS_DIR = path.join(WORKSPACE, 'harness');
 const ACTIVE_FILE = path.join(WORKSPACE, 'ACTIVE.md');
 
-// Agent keywords for matching (34 agents total)
+// Agent keywords for matching
 const AGENT_KEYWORDS = {
-  // === ENGINEERING (26 agents) ===
   'engineering-frontend-developer': {
-    keywords: ['react', 'vue', 'angular', 'ui', 'css', 'frontend', 'component', 'virtualization', 'mobile', 'responsive', '网页', '前端'],
+    keywords: ['react', 'vue', 'angular', 'ui', 'css', 'frontend', 'component', 'virtualization', 'mobile', 'responsive'],
     weight: 1.0,
+    threshold: 1,
     category: 'engineering'
   },
   'engineering-backend-architect': {
-    keywords: ['api', 'database', 'schema', 'microservice', 'backend', 'architecture', 'sql', 'nosql', 'scalability', '后端', '服务器'],
+    keywords: ['api', 'database', 'schema', 'microservice', 'backend', 'architecture', 'sql', 'nosql', 'scalability'],
     weight: 1.0,
+    threshold: 1,
     category: 'engineering'
   },
   'engineering-security-engineer': {
-    keywords: ['security', 'audit', 'threat', 'owasp', 'vulnerability', 'pentest', 'encryption', 'auth', '安全', '渗透', '漏洞'],
+    keywords: ['security', 'audit', 'threat', 'owasp', 'vulnerability', 'pentest', 'encryption', 'auth'],
     weight: 1.2,
+    threshold: 1,
     category: 'engineering'
   },
   'engineering-test-engineer': {
-    keywords: ['test', 'coverage', 'qa', 'e2e', 'unit', 'integration', 'jest', 'cypress', '测试', '自动化测试'],
+    keywords: ['test', 'coverage', 'qa', 'e2e', 'unit', 'integration', 'jest', 'cypress'],
     weight: 1.0,
+    threshold: 1,
     category: 'engineering'
   },
-  'engineering-devops-automator': {
-    keywords: ['ci/cd', 'deploy', 'pipeline', 'infrastructure', 'automation', 'docker', 'kubernetes', 'devops', 'cicd', '部署', '容器'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-ai-engineer': {
-    keywords: ['ai', 'ml', 'machine learning', 'model', 'tensorflow', 'pytorch', 'nlp', 'llm', 'rag', 'embedding', '人工智能', '机器学习', '大模型', 'AI工程师'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-data-engineer': {
-    keywords: ['data pipeline', 'etl', 'elt', 'spark', 'dbt', 'data lake', 'lakehouse', 'streaming', 'kafka', 'flink', '数据管道', '数据工程', '数据仓库'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-mobile-app-builder': {
-    keywords: ['ios', 'android', 'mobile app', 'react native', 'flutter', 'swift', 'kotlin', 'app store', 'google play', '移动端', 'APP开发', '原生开发'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-solidity-smart-contract-engineer': {
-    keywords: ['solidity', 'smart contract', 'evm', 'defi', 'web3', 'ethereum', 'nft', 'dao', 'gas optimization', 'proxy', '区块链', '智能合约', 'DeFi'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-senior-developer': {
-    keywords: ['senior', 'refactor', 'architecture', 'technical debt', 'code review', 'senior developer', '资深开发', '重构'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-software-architect': {
-    keywords: ['software architect', 'system design', 'high level', 'hld', 'lld', 'architecture pattern', 'microservices', 'soa', '系统架构', '软件架构'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-database-optimizer': {
-    keywords: ['database', 'sql', 'nosql', 'postgres', 'mysql', 'mongodb', 'redis', 'performance', 'optimization', 'index', 'query', '数据库', '性能优化'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-data-engineer': {
-    keywords: ['data pipeline', 'etl', 'spark', 'dbt', 'airflow', 'data warehouse', 'big data', 'hadoop', '数据工程', '数据管道'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-ai-data-remediation-engineer': {
-    keywords: ['data quality', 'data cleaning', 'data remediation', 'data governance', 'data lineage', '数据清洗', '数据质量', '数据治理'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-autonomous-optimization-architect': {
-    keywords: ['auto optimization', 'self-tuning', 'adaptive', 'autonomous', 'optimization', 'performance tuning', '自动优化', '自适应'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-cms-developer': {
-    keywords: ['cms', 'wordpress', 'contentful', 'strapi', 'headless', 'content management', 'CMS', '内容管理'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-code-reviewer': {
-    keywords: ['code review', 'pr review', 'pull request', 'review', 'static analysis', 'lint', '代码审查', 'PR审查'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-embedded-firmware-engineer': {
-    keywords: ['embedded', 'firmware', 'rtos', 'microcontroller', 'arm', 'c', 'c++', 'iot', '嵌入式', '固件', '单片机'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-email-intelligence-engineer': {
-    keywords: ['email', 'smtp', 'imap', 'mail', 'sendgrid', 'mailgun', '邮件', '企业邮箱', '邮件系统'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-feishu-integration-developer': {
-    keywords: ['feishu', 'lark', '飞书', 'bytedance', '办公软件', '企业应用', '集成'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-filament-optimization-specialist': {
-    keywords: ['filament', 'laravel', 'php', 'tall stack', ' filament优化', 'laravel'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-git-workflow-master': {
-    keywords: ['git', 'workflow', 'branching', 'merge', 'rebase', 'gitflow', 'github flow', '版本控制', '分支管理'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-incident-response-commander': {
-    keywords: ['incident', 'outage', 'oncall', 'p1', 'p2', 'emergency', '故障', '事故响应', 'on-call', '监控告警'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-rapid-prototyper': {
-    keywords: ['prototype', 'mvp', 'demo', 'poc', 'rapid', 'stub', 'mock', '原型', 'MVP', '快速原型'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-sre': {
-    keywords: ['sre', 'site reliability', 'reliability', 'monitoring', 'slo', 'sla', 'observability', '运维', '可靠性'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-technical-writer': {
-    keywords: ['documentation', 'docs', 'readme', 'technical writing', 'wiki', 'swagger', 'openapi', '文档', '技术文档'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-threat-detection-engineer': {
-    keywords: ['threat detection', 'ids', 'ips', 'siem', 'security monitoring', 'threat intelligence', '威胁检测', '安全监控'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-wechat-mini-program-developer': {
-    keywords: ['wechat', 'miniprogram', '小程序', '微信', 'weixin', 'wechat dev'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  // === DESIGN (8 agents) ===
   'design-ux-researcher': {
-    keywords: ['ux', 'research', 'persona', 'user', 'journey', 'interview', 'usability', '用户研究', '用户体验', '调研'],
+    keywords: ['ux', 'research', 'persona', 'user', 'journey', 'interview', 'usability'],
     weight: 1.0,
+    threshold: 1,
     category: 'design'
   },
   'design-ui-designer': {
-    keywords: ['ui', 'design', 'visual', 'component', 'library', 'system', 'figma', 'sketch', '界面设计', 'UI设计'],
+    keywords: ['design', 'visual', 'component', 'library', 'system', 'figma', 'sketch'],
     weight: 1.0,
+    threshold: 1,
     category: 'design'
   },
-  'design-ux-architect': {
-    keywords: ['ux architect', 'user experience', 'information architecture', 'ia', 'wireframe', 'prototype', '用户体验架构', '信息架构'],
+  'engineering-devops-automator': {
+    keywords: ['ci/cd', 'deploy', 'pipeline', 'infrastructure', 'automation', 'docker', 'kubernetes'],
     weight: 1.0,
-    category: 'design'
-  },
-  'design-brand-guardian': {
-    keywords: ['brand', 'branding', 'identity', 'logo', 'guideline', '品牌', '品牌设计', '品牌规范'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-image-prompt-engineer': {
-    keywords: ['image prompt', 'midjourney', 'dalle', 'stable diffusion', 'ai image', 'prompt engineering', '图片生成', 'AI绘图'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-inclusive-visuals-specialist': {
-    keywords: ['inclusive', 'accessibility', 'a11y', 'wcag', 'accessible', 'diversity', '无障碍', '包容性设计'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-visual-storyteller': {
-    keywords: ['visual', 'storytelling', 'infographic', 'presentation', 'narrative', '可视化', '故事化'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-whimsy-injector': {
-    keywords: ['whimsy', 'playful', 'fun', 'delight', 'humor', 'personality', '趣味', '创意', '品牌调性'],
-    weight: 1.0,
-    category: 'design'
+    threshold: 1,
+    category: 'engineering'
   }
 };
 
 async function main() {
-  const args = process.argv.slice(2);
-  const taskDescription = args.join(' ');
-  
-  // Handle --help and --version flags
-  if (args.includes('--help') || args.includes('-h')) {
-    console.log(`
-/harness - Unified project creation and advancement
-
-Usage:
-  /harness <task description>
-  harness --help
-  harness --version
-
-Examples:
-  /harness 为 Pipi-go 实现移动端棋盘缩放功能
-  /harness 创建一个新的数据分析 Dashboard 项目
-  /harness 优化 Pipi-go 的性能，FPS 达到 60
-
-Options:
-  --help, -h     Show this help message
-  --version      Show version information
-`);
-    process.exit(0);
-  }
-  
-  if (args.includes('--version') || args.includes('-v')) {
-    console.log('/harness v1.0.0 (agent-harness-trinity)');
-    process.exit(0);
-  }
+  const taskDescription = process.argv.slice(2).join(' ');
   
   if (!taskDescription) {
     console.error('❌ Usage: /harness <task description>');
@@ -246,8 +78,6 @@ Options:
     console.error('Examples:');
     console.error('  /harness 为 Pipi-go 实现移动端棋盘缩放功能');
     console.error('  /harness 创建一个新的数据分析 Dashboard 项目');
-    console.error('');
-    console.error('Use --help for more information.');
     process.exit(1);
   }
   
@@ -356,7 +186,7 @@ async function scoreTask(task) {
   let decision;
   if (total >= 3.5) {
     decision = 'SUBAGENT + SPECIALIZED AGENT';
-  } else if (total >= 2.0) {
+  } else if (total >= 2.8) {
     decision = 'SUBAGENT (GENERAL ROLE)';
   } else {
     decision = 'MAIN SESSION';
@@ -371,18 +201,9 @@ async function scoreTask(task) {
 
 function estimateComplexity(task) {
   const indicators = {
-    high: [
-      // Chinese high complexity
-      '架构', '设计', '实现', '创建', '系统', '组件', '完整', '开发', '智能', '预测', '优化', '机器学习', '深度学习',
-      // English high complexity
-      'design', 'implement', 'implement', 'create', 'create', 'system', 'component', 'virtual', 'virtualization', 'architecture', 'architect', 'ml', 'ai', 'machine learning', 'full-stack', 'fullstack', 'end-to-end'
-    ],
-    medium: [
-      'add', '添加', 'update', '更新', 'modify', '修改', 'optimize', '优化', '增强', 'extend'
-    ],
-    low: [
-      'fix', '修复', 'remove', '删除', 'rename', '重命名', 'tweak', 'adjust'
-    ]
+    high: ['架构', 'design', 'implement', '实现', 'create', '创建', 'system', '系统', '组件', 'component', 'virtual', 'virtualization'],
+    medium: ['add', '添加', 'update', '更新', 'modify', '修改', 'optimize', '优化'],
+    low: ['fix', '修复', 'remove', '删除', 'rename', '重命名']
   };
   
   const highCount = indicators.high.filter(k => task.includes(k)).length;
@@ -393,47 +214,28 @@ function estimateComplexity(task) {
   if (highCount >= 1) return 4;
   if (medCount >= 2) return 3;
   if (medCount >= 1) return 2;
-  return 2;
+  return 2; // Bump baseline from 1 to 2
 }
 
 function estimateExpertise(task) {
-  let score = 2;
+  let score = 2; // Bump baseline from 1 to 2
   const lower = task.toLowerCase();
   
-  // Domain-specific keywords (bilingual: English + Chinese)
+  // Check for domain-specific keywords
   const domainKeywords = [
-    // Frontend
-    'react', 'vue', 'angular', 'javascript', 'typescript', 'css', 'frontend', '网页', '前端',
-    // Backend
-    'api', 'database', 'sql', 'nosql', 'backend', '后端', '服务器', '微服务',
-    // AI/ML
-    'ml', 'ai', 'machine learning', 'model', 'tensorflow', 'pytorch', 'nlp', 'llm', 'rag',
-    '机器学习', '人工智能', '深度学习', '神经网络', '大模型', 'NLP', 'AI模型',
-    // Security
-    'security', 'auth', 'encryption', '安全', '渗透', '漏洞', 'OWASP',
-    // Design
-    'ux', 'design', 'visual', 'ui', '用户体验', '界面设计', '设计',
-    // Mobile
-    'mobile', 'ios', 'android', 'app', '移动端', 'APP', '小程序',
-    // Blockchain/Web3
-    'blockchain', 'web3', 'ethereum', 'solidity', 'defi', 'smart contract', '区块链', '以太坊', '智能合约', 'DeFi',
-    // Data
-    'data pipeline', 'etl', 'spark', '数据', '数据工程', '数据管道',
-    // DevOps
-    'ci/cd', 'docker', 'kubernetes', 'deploy', 'devops', 'cicd', '部署', '容器',
-    // Specialized
-    'embedded', 'firmware', 'iot', '嵌入式', '固件',
-    'sre', 'reliability', 'monitoring', 'slo', '运维', '可靠性',
-    'git', 'workflow', '版本控制', '分支',
-    'cms', 'wordpress', '内容管理',
-    'technical writing', 'docs', '文档', '技术文档',
-    'penetration', 'threat', '威胁检测', '安全监控',
+    'react', 'vue', 'angular', 'javascript', 'typescript', // frontend
+    'api', 'database', 'sql', 'nosql', 'backend', // backend
+    'security', 'auth', 'encryption', // security
+    'ml', 'ai', 'model', // AI/ML
+    'ux', 'design', 'visual', // design
+    'mobile', 'ios', 'android', // mobile
+    'zoom', 'touch', 'gesture' // gestures
   ];
   
   const matches = domainKeywords.filter(k => lower.includes(k)).length;
   
-  if (matches >= 5) return 5;
-  if (matches >= 4) return 4;
+  if (matches >= 4) return 5;
+  if (matches >= 3) return 4;
   if (matches >= 2) return 3;
   return 2;
 }
@@ -459,15 +261,15 @@ function estimateEffort(task) {
   const lower = task.toLowerCase();
   
   // Time indicators
-  if (lower.includes('完整') || lower.includes('end-to-end') || lower.includes('全栈') || lower.includes('完整实现')) {
+  if (lower.includes('完整') || lower.includes('end-to-end') || lower.includes('全栈')) {
     return 5;
   }
   
-  if (lower.includes('功能') || lower.includes('feature') || lower.includes('开发')) {
+  if (lower.includes('功能') || lower.includes('feature')) {
     return 4;
   }
   
-  if (lower.includes('优化') || lower.includes('optimize') || lower.includes('改进')) {
+  if (lower.includes('优化') || lower.includes('optimize')) {
     return 3;
   }
   
@@ -644,10 +446,12 @@ async function dispatchSubagent(project, task, agent) {
   // Create sessions_spawn command for OpenClaw
   const spawnCommand = createSessionsSpawnCommand(sessionId, task, label, attachments);
   
+  // In OpenClaw environment, this would be executed via tool call
+  // For now, output the command for manual execution or tool integration
   console.log(`\n🔧 OpenClaw sessions_spawn command:`);
   console.log(spawnCommand);
   
-  // Try to execute via OpenClaw
+  // Try to execute via OpenClaw tool if available
   const result = await executeSessionsSpawn(task, label, attachments);
   
   if (result && result.sessionKey) {
@@ -655,19 +459,7 @@ async function dispatchSubagent(project, task, agent) {
     return result.sessionKey;
   }
   
-  // Write spawn command to a file for agent to read
-  const spawnFile = path.join(WORKSPACE, '.harness-spawn-pending.json');
-  await writeFile(spawnFile, JSON.stringify({
-    task,
-    label,
-    agent,
-    attachments,
-    sessionId,
-    command: spawnCommand.trim()
-  }, null, 2));
-  console.log(`\n📄 Spawn command written to: ${spawnFile}`);
-  console.log(`⚠️  Run in OpenClaw: copy the command above or run 'openclaw agent --spawn-file ${spawnFile}'`);
-  
+  console.log(`\n⚠️  Subagent spawn command generated. Execute manually or integrate with OpenClaw tool.`);
   return sessionId;
 }
 
@@ -690,59 +482,22 @@ sessions_spawn({
 
 async function executeSessionsSpawn(task, label, attachments) {
   // Check if running in OpenClaw environment
-  const inOpenClaw = process.env.OPENCLAW_SESSION_KEY || process.env.OPENCLAW_GATEWAY_URL;
-  
-  if (!inOpenClaw) {
-    // Try to detect if openclaw CLI is available
-    try {
-      const { execSync } = await import('child_process');
-      execSync('openclaw --version', { stdio: 'pipe' });
-      
-      // openclaw is available - try to spawn via openclaw agent
-      console.log('\n🔧 OpenClaw CLI detected, attempting spawn...');
-      
-      const agentConfig = {
-        runtime: 'subagent',
-        task,
-        label,
-        mode: 'session',
-        attachments: attachments.map(f => ({
-          name: path.basename(f),
-          content: `File: ${f}`,
-          encoding: 'utf8'
-        }))
-      };
-      
-      // Write spawn config to temp file
-      const configFile = path.join('/tmp', `spawn-${Date.now()}.json`);
-      await writeFile(configFile, JSON.stringify(agentConfig, null, 2));
-      
-      // Execute via openclaw agent
-      try {
-        const result = execSync(`openclaw agent spawn --config ${configFile}`, {
-          encoding: 'utf8',
-          timeout: 30000
-        });
-        
-        console.log(`✅ Spawn result: ${result}`);
-        return { sessionKey: `session_${Date.now()}`, status: 'running', raw: result };
-      } catch (e) {
-        // Spawn command might not exist yet - this is expected
-        console.log('   openclaw agent spawn not available, generating command only');
-        return null;
-      }
-    } catch (e) {
-      // openclaw not available
-    }
+  if (process.env.OPENCLAW_SESSION_KEY) {
+    // We're in OpenClaw - would need to call the actual tool
+    // This is a placeholder for the actual implementation
+    console.log('   Running in OpenClaw environment, attempting spawn...');
     
-    console.log('   Running standalone (not in OpenClaw), command generated only');
-    return null;
+    // In real OpenClaw integration, this would be:
+    // const result = await sessions_spawn({ runtime: "subagent", task, label, attachments });
+    // return result;
+    
+    // For now, return simulated result
+    return { sessionKey: `session_${Date.now()}`, status: 'running' };
   }
   
-  // In OpenClaw environment - call the sessions_spawn tool directly
-  // This would be done via the OpenClaw tool interface
-  console.log('\n✅ Running in OpenClaw environment');
-  return { sessionKey: `session_${Date.now()}`, status: 'running' };
+  // Not in OpenClaw environment
+  console.log('   Running standalone (not in OpenClaw), command generated only');
+  return null;
 }
 
 async function updateActive(project, task, session, agent) {
