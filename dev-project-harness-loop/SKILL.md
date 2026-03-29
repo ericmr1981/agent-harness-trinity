@@ -148,6 +148,48 @@ Hard requirement:
 
 Before claiming a milestone/completion:
 - run: `bash scripts/run_change_guard.sh`
+
+---
+
+## Step 8) Failure Recovery (NEW)
+
+When verification fails, follow `references/failure-recovery-protocol.md`:
+
+1. **Classify failure**: L0 (build) / L1 (test) / L2 (UX)
+2. **Auto-retry**: Up to 2 attempts with different fixes
+3. **Escalate or backlog**: If retries exhausted, create escalation or backlog task
+
+**Key rule**: Don't wait for human on first failure. Try to recover autonomously.
+
+---
+
+## Step 9) Auto-Resume (NEW)
+
+At session start, follow `references/auto-resume-protocol.md`:
+
+1. **Read ACTIVE.md** → Check for running session
+2. **If running**: Fetch session history, extract handoff, resume
+3. **If not running**: Read harness truth (contracts, features.json, CHANGELOG)
+4. **Reconcile**: Decide whether to continue session or start from harness
+
+**Key rule**: Don't ask human "what was I doing?". Resume from files automatically.
+
+---
+
+## Step 10) CLI Integration (NEW)
+
+When using `/harness <task>` command:
+
+1. **Auto-inject skills**:
+   - `dev-project-harness-loop/SKILL.md` (harness flow)
+   - `subagent-coding-lite/SKILL.md` (subagent spec)
+   - `agency-agents-lib/agents/<category>/<agent>.md` (domain expertise)
+
+2. **Auto-score task**: Determine if subagent needed
+
+3. **Auto-create artifacts**: goal.md, contracts, assignments
+
+**See**: `scripts/harness.js` for implementation
   - if no tests configured, set `harness.json:testCommand` or pass `--test "<cmd>"`
 
 If guard fails:
