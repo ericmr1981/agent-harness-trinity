@@ -115,7 +115,7 @@ Usage:
   // Step 6: Update ACTIVE.md
   await updateActive(project, taskDescription, plan);
 
-  // Final report
+  // Final report (shows matrix-driven decisions)
   printReport(project, taskDescription, llmResult, plan);
 
   // Write master spawn config
@@ -482,28 +482,56 @@ async function handleClarification(llmResult) {
 }
 
 // ============================================================
-// STEP 4: Sprint plan generation
+// STEP 4: Sprint plan generation (matrix-driven)
 // ============================================================
 async function generateSprintPlan(taskDescription, project, llmResult, scan) {
   const sprints = [];
   const baseDir = path.join(HARNESS_DIR, 'contracts');
   await mkdir(baseDir, { recursive: true });
 
+  const { complexity, riskLevel, scopeGuess, taskType } = llmResult.taskProfile;
+
+  // ── Matrix-driven decisions ──────────────────────────────────
+  const matrixFlags = [];
+
+  if (complexity >= 4) {
+    matrixFlags.push({ flag: 'COMPLEXITY_HIGH', note: `complexity=${complexity} — consider splitting or adding verifier` });
+  }
+
+  if (riskLevel === 'high') {
+    matrixFlags.push({ flag: 'RISK_HIGH', note: 'risk=high — enforce L1 acceptance, no L0-only shortcuts' });
+  }
+
+  if (scopeGuess === 'multi-file' || scopeGuess === 'cross-layer' || scopeGuess === 'full-rewrite') {
+    matrixFlags.push({ flag: 'SCOPE_MULTI', note: `scope=${scopeGuess} — affects ${scan.topFiles.length} files, confirm with Boss` });
+  }
+
+  // Agent selection: prefer LLM suggestion, fall back to keyword match
+  const suggestedAgent = llmResult.taskProfile.agentSuggestions?.[0];
+  const primaryAgent = suggestedAgent || detectAgentFallback(taskDescription);
+
+  if (suggestedAgent) {
+    matrixFlags.push({ flag: 'AGENT_LLM_SUGGESTED', note: `LLM suggests: ${suggestedAgent}` });
+  }
+
+  // ── Sprint generation ────────────────────────────────────────
   if (llmResult.isMultiAgent && llmResult.agentPlan && llmResult.agentPlan.length > 0) {
     // Multi-agent: one sprint per agent
     for (const spec of llmResult.agentPlan) {
+      const specFlags = detectSpecFlags(spec.scope, llmResult.taskProfile);
       sprints.push({
         sprintId: spec.sprintId,
         role: spec.role,
         scope: spec.scope,
         dependsOn: spec.dependsOn || [],
-        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints),
-        agent: selectAgentFromId(spec.role)
+        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints, { ...matrixFlags, specFlags }),
+        agent: selectAgentFromId(spec.role),
+        matrixFlags: [...matrixFlags, ...specFlags]
       });
     }
   } else {
     // Single agent: one sprint
-    const primaryAgent = llmResult.taskProfile.agentSuggestions?.[0] || 'engineering-senior-developer';
+    const specFlags = detectSpecFlags(taskDescription, llmResult.taskProfile);
     const spec = {
       sprintId: 'sprint-1',
       role: primaryAgent,
@@ -515,18 +543,53 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan) {
       role: spec.role,
       scope: spec.scope,
       dependsOn: [],
-      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, []),
-      agent: selectAgentFromId(spec.role)
+      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, [], { ...matrixFlags, specFlags }),
+      agent: selectAgentFromId(spec.role),
+      matrixFlags: [...matrixFlags, ...specFlags]
     });
   }
 
-  // Build enhanced brief for each sprint
-  const masterBrief = buildMasterBrief(project, scan, llmResult);
+  // ── High-complexity warning: suggest split ────────────────────
+  if (complexity >= 4 && sprints.length === 1) {
+    matrixFlags.push({ flag: 'WARN_UNSPLIT_COMPLEX', note: `complexity=${complexity} but single sprint — recommend splitting into 2 sprints` });
+  }
 
-  return { sprints, masterBrief };
+  // Build enhanced brief for each sprint
+  const masterBrief = buildMasterBrief(project, scan, llmResult, matrixFlags);
+
+  return { sprints, masterBrief, matrixFlags };
 }
 
-function buildMasterBrief(project, scan, llmResult) {
+// Detect per-spec flags based on scope description
+function detectSpecFlags(scope, profile) {
+  const flags = [];
+  const lower = scope.toLowerCase();
+  if (lower.includes('frontend') || lower.includes('ui') || lower.includes('界面')) {
+    flags.push({ flag: 'SPEC_UI', note: 'scope includes UI — add L2 e2e acceptance' });
+  }
+  if (lower.includes('api') || lower.includes('endpoint') || lower.includes('接口')) {
+    flags.push({ flag: 'SPEC_API', note: 'scope includes API — validate routes/contracts' });
+  }
+  if (lower.includes('database') || lower.includes('schema') || lower.includes('migration')) {
+    flags.push({ flag: 'SPEC_DB', note: 'scope includes DB — add schema/rollback plan' });
+  }
+  return flags;
+}
+
+// Fallback agent detection when LLM gives no suggestion
+function detectAgentFallback(taskDescription) {
+  const lower = taskDescription.toLowerCase();
+  for (const [id, config] of Object.entries(AGENT_KEYWORDS)) {
+    if (config.keywords.some(k => lower.includes(k))) return id;
+  }
+  return 'engineering-senior-developer';
+}
+
+function buildMasterBrief(project, scan, llmResult, matrixFlags = []) {
+  const flagSection = matrixFlags.length > 0
+    ? `\n## Matrix Flags（矩阵驱动的决策标记）\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}\n`
+    : '';
+
   return `# Architectural Brief — ${project.displayName}
 > harness.js v3 | ${new Date().toISOString()}
 > LLM-analyzed
@@ -536,7 +599,7 @@ function buildMasterBrief(project, scan, llmResult) {
 - **技能**: ${(llmResult.taskProfile.skillsNeeded || []).join(', ') || '见下方 agent 建议'}
 - **复杂度**: ${llmResult.taskProfile.complexity}/5
 - **风险**: ${llmResult.taskProfile.riskLevel}
-- **范围**: ${llmResult.taskProfile.scopeGuess}
+- **范围**: ${llmResult.taskProfile.scopeGuess}${flagSection}
 
 ## 架构要点（LLM 推理）
 ${llmResult.enhancedBrief}
@@ -553,7 +616,31 @@ ${scan.forbidden.join(', ')}
 `;
 }
 
-function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints) {
+function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, { matrixFlags = [], specFlags = [] } = {}) {
+  const allFlags = [...matrixFlags, ...specFlags];
+  const riskHigh = llmResult.taskProfile.riskLevel === 'high';
+  const complexityHigh = llmResult.taskProfile.complexity >= 4;
+
+  // Build acceptance section based on risk + complexity flags
+  let acceptanceSection = `## 验收
+\`\`\`bash
+cd "${project.repoPath}" && ${scan.buildCmd} && ${scan.guardCmd}
+\`\`\``;
+
+  if (riskHigh || complexityHigh) {
+    acceptanceSection += `
+
+### 强制验收（L${riskHigh ? '1' : '1'}+ enforced by matrix flag）
+- **L0**: \`${scan.buildCmd}\` ✅
+- **L1**: \`${scan.testCmd}\` + \`${scan.guardCmd}\` ✅
+${specFlags.some(f => f.flag === 'SPEC_UI') ? '- **L2**: Manual UI e2e — validate rendering + interactions ✅\n' : ''}${specFlags.some(f => f.flag === 'SPEC_API') ? '- **L2**: API contract check — validate endpoints + response shapes\n' : ''}${specFlags.some(f => f.flag === 'SPEC_DB') ? '- **L2**: Schema + rollback plan verified\n' : ''}${!specFlags.some(f => f.flag === 'SPEC_UI') && !specFlags.some(f => f.flag === 'SPEC_API') && !specFlags.some(f => f.flag === 'SPEC_DB') && complexityHigh ? '- **L2**: End-to-end scenario validated\n' : ''}`;
+  }
+
+  // Flag summary section
+  const flagSection = allFlags.length > 0
+    ? `\n## Matrix Flags（本 sprint 决策标记）\n${allFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}\n`
+    : '';
+
   return `# Sprint Contract — ${spec.sprintId}
 
 ## 任务
@@ -563,17 +650,13 @@ ${spec.scope}
 ${project.displayName} | ${project.repoPath}
 
 ## Agent
-${spec.role}
-
+${spec.role}${flagSection}
 ## 依赖
 ${spec.dependsOn.length === 0 ? '_无（第一个 sprint）_' : spec.dependsOn.map(d => `- ${d}`).join('\n')}
 
 ${spec.dependsOn.length > 0 ? `## 前置 Sprint 交付物
 必须读取: \`harness/handoffs/${spec.dependsOn[0]}-handoff.md\`
-` : ''}## 验收
-\`\`\`bash
-cd "${project.repoPath}" && ${scan.buildCmd} && ${scan.guardCmd}
-\`\`\`
+` : ''}${acceptanceSection}
 
 ## 注意事项（来自 LLM 分析）
 ${llmResult.enhancedBrief}
@@ -623,13 +706,7 @@ async function dispatchSprints(plan) {
       const depsMet = sprint.dependsOn.every(d => executed.has(d));
       if (!depsMet) continue;
 
-      // Check prior sprint handoffs exist if needed
-      const priorHandoffs = sprint.dependsOn.map(d => {
-        const h = path.join(HARNESS_DIR, 'handoffs', `${d}-handoff.md`);
-        return { path: h, exists: false };
-      });
-
-      await dispatchSingleSprint(sprint, plan.masterBrief, briefPath);
+      await dispatchSingleSprint(sprint, plan.masterBrief, briefPath, plan.matrixFlags || []);
       executed.add(sprint.sprintId);
       changed = true;
     }
@@ -641,10 +718,14 @@ async function dispatchSprints(plan) {
   }
 }
 
-async function dispatchSingleSprint(sprint, masterBrief, briefPath) {
+async function dispatchSingleSprint(sprint, masterBrief, briefPath, globalMatrixFlags = []) {
   console.log(`\n🚀 Dispatching: ${sprint.sprintId} (${sprint.role})`);
   if (sprint.dependsOn.length > 0) {
     console.log(`   Waiting for: ${sprint.dependsOn.join(', ')}`);
+  }
+  const allFlags = [...globalMatrixFlags, ...(sprint.matrixFlags || [])];
+  if (allFlags.length > 0) {
+    allFlags.forEach(f => console.log(`   ⚡ [${f.flag}] ${f.note}`));
   }
 
   const attachments = [
@@ -657,7 +738,7 @@ async function dispatchSingleSprint(sprint, masterBrief, briefPath) {
     path.join(HARNESS_DIR, 'contracts', `${sprint.sprintId}.md`)
   ];
 
-  // Write spawn config
+  // Write spawn config — includes matrix flags for decision-making by main agent
   const spawnConfig = {
     sprintId: sprint.sprintId,
     task: sprint.scope,
@@ -667,6 +748,7 @@ async function dispatchSingleSprint(sprint, masterBrief, briefPath) {
     masterBriefPath: briefPath,
     sprintContractPath: path.join(HARNESS_DIR, 'contracts', `${sprint.sprintId}.md`),
     dependsOn: sprint.dependsOn,
+    matrixFlags: allFlags,          // ← matrix-driven decisions for main agent
     sessionId: `session_${Date.now()}_${sprint.sprintId}`,
     dispatchTime: new Date().toISOString()
   };
@@ -681,6 +763,10 @@ async function dispatchSingleSprint(sprint, masterBrief, briefPath) {
 // STEP 6: ACTIVE.md
 // ============================================================
 async function updateActive(project, taskDescription, plan) {
+  const { matrixFlags = [] } = plan;
+  const flagSummary = matrixFlags.length > 0
+    ? `\n## Matrix Flags\n${matrixFlags.map(f => `- [${f.flag}] ${f.note}`).join('\n')}` : '';
+
   const content = `# ACTIVE.md — Current WIP
 
 ## Current Project
@@ -692,7 +778,10 @@ async function updateActive(project, taskDescription, plan) {
 - **Sprints**: ${plan.sprints.map(s => s.sprintId).join(', ')}
 
 ## Sprint Plan
-${plan.sprints.map(s => `- **${s.sprintId}**: ${s.role} | deps: ${s.dependsOn.join(', ') || 'none'}`).join('\n')}
+${plan.sprints.map(s => {
+  const sf = (s.matrixFlags || []).map(f => `[${f.flag}]`).join(' ');
+  return `- **${s.sprintId}**: ${s.role} ${sf}| deps: ${s.dependsOn.join(', ') || 'none'}`;
+}).join('\n')}${flagSummary}
 
 ## Master Brief
 harness/assignments/master-brief-${Date.now()}.md
@@ -700,6 +789,7 @@ harness/assignments/master-brief-${Date.now()}.md
 ## Dispatch Rules (v3 — enforced)
 - ALL dispatches go through harness.js (this run)
 - LLM task profiling + enhanced brief generated
+- Matrix-driven decisions: complexity/risk/scope flags affect acceptance criteria
 - Formal failure recovery: L0/L1/L2, max 2 retries per sprint
 - Multi-agent: dependency-ordered, not parallel
 
@@ -713,8 +803,10 @@ harness/assignments/master-brief-${Date.now()}.md
 // REPORT
 // ============================================================
 function printReport(project, taskDescription, llmResult, plan) {
+  const { matrixFlags = [] } = plan;
+
   console.log('\n' + '='.repeat(70));
-  console.log('📊 HARNESS TASK REPORT v3 — LLM-Augmented');
+  console.log('📊 HARNESS TASK REPORT v3 — LLM-Augmented + Matrix-Driven');
   console.log('='.repeat(70));
   console.log(`Project:     ${project.displayName}`);
   console.log(`Task:        ${taskDescription}`);
@@ -724,15 +816,27 @@ function printReport(project, taskDescription, llmResult, plan) {
   console.log(`   Risk:      ${llmResult.taskProfile.riskLevel}`);
   console.log(`   Scope:     ${llmResult.taskProfile.scopeGuess}`);
   console.log(`   Multi-Agent: ${llmResult.isMultiAgent ? 'YES' : 'no'}`);
+  console.log(`   Suggested Agent: ${llmResult.taskProfile.agentSuggestions?.[0] || '(none — using fallback)'}`);
+
+  if (matrixFlags.length > 0) {
+    console.log(`\n⚡ Matrix-Driven Decisions:`);
+    matrixFlags.forEach(f => {
+      const icon = f.flag.includes('WARN') ? '⚠️ ' : '→';
+      console.log(`   ${icon} [${f.flag}] ${f.note}`);
+    });
+  } else {
+    console.log(`\n⚡ Matrix-Driven Decisions: none triggered (low complexity, low risk, single-file)`);
+  }
 
   console.log(`\nSprints:`);
   plan.sprints.forEach(s => {
-    console.log(`   ${s.sprintId}: ${s.role} (deps: ${s.dependsOn.join(', ') || 'none'})`);
+    const sprintFlags = (s.matrixFlags || []).map(f => `[${f.flag}]`).join(' ');
+    console.log(`   ${s.sprintId}: ${s.role} ${sprintFlags}(deps: ${s.dependsOn.join(', ') || 'none'})`);
   });
 
   console.log('\n' + '='.repeat(70));
   console.log('\n✅ harness.js v3 complete');
-  console.log('   Next: integrate sessions_spawn calls in Step 5');
+  console.log('   Next: confirm matrix flags with Boss → sessions_spawn dispatch');
   console.log('');
 }
 

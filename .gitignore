@@ -4,3 +4,8 @@
 # Python
 __pycache__/
 *.pyc
+
+# harness.js runtime artifacts (scripts/ 下的 harness 产物)
+dev-project-harness-loop/scripts/.harness-*.json
+dev-project-harness-loop/scripts/ACTIVE.md
+dev-project-harness-loop/scripts/harness/
