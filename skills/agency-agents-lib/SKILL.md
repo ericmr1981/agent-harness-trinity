@@ -93,6 +93,49 @@ node skills/agency-agents-lib/scripts/search.js --category engineering
 
 ---
 
+## 🔀 Agent Decision Tree（v4 新增）
+
+> 用于替代纯关键词匹配，提高 agent 选择的语义准确性。
+
+### 决策矩阵：action-verb × target-type
+
+| | frontend | backend | database | devops | security | ai | mobile |
+|---|---|---|---|---|---|---|---|
+| **implement** | frontend-developer | backend-architect | database-optimizer | devops-automator | senior-developer | ai-engineer | mobile-app-builder |
+| **fix** | frontend-developer | backend-architect | database-optimizer | — | security-engineer | — | — |
+| **refactor** | senior-developer | senior-developer | senior-developer | — | — | — | — |
+| **design** | software-architect | software-architect | software-architect | software-architect | — | — | — |
+| **test** | test-engineer | test-engineer | test-engineer | — | — | — | — |
+| **deploy** | — | — | — | devops-automator | — | — | — |
+| **secure** | — | — | — | — | security-engineer | — | — |
+| **document** | technical-writer | technical-writer | technical-writer | — | — | — | — |
+| **analyze** | ux-researcher | senior-developer | — | — | — | ai-engineer | — |
+| **build_ui** | ui-designer | — | — | — | — | — | — |
+
+### 选择规则
+
+1. **先匹配 action verb**（implement / fix / refactor / design / test / deploy / secure / document / analyze / build_ui）
+2. **再匹配 target type**（frontend / backend / database / devops / security / ai / mobile）
+3. **matrix 有精确匹配则用精确匹配**；否则 fallback 到 `action|*`
+4. **复杂度 ≥ 5 时，LLM 建议优先于 decision tree**
+5. **无任何匹配时**：默认 `engineering-senior-developer`
+
+### 使用方式
+
+在 harness.js v4 中自动调用（llm / llm-full 模式）：
+```javascript
+const agent = agencyDecisionTree(taskDescription, llmResult, complexity);
+```
+
+主 agent 也可独立使用此决策树，无需运行 harness.js：
+```javascript
+// 例：用户说 "修复前端的登录 bug"
+const agent = agencyDecisionTree("修复前端的登录 bug", null, 3);
+// → engineering-frontend-developer
+```
+
+---
+
 ## 🔧 Helper 脚本
 
 ### build_index.js

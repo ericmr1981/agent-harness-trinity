@@ -74,13 +74,18 @@ Every subagent brief should specify:
 4) contract / goal pointers
 5) allowed capabilities
 6) acceptance oracle
-7) output contract
+7) output contract (Handoff section)
 8) escalation rule
 
-Templates:
-- Assignment brief: `TEMPLATE_ASSIGNMENT.md`
-- Handoff packet: `TEMPLATE_HANDOFF.md`
-- Role charters: `references/role-charters.md`
+### Templates
+
+| 模板 | 用途 | Token 消耗 |
+|------|------|-----------|
+| `TEMPLATE_BRIEF.md` ⭐ | **合并版**（assignment + handoff 一体）| ~800 tokens |
+| `TEMPLATE_ASSIGNMENT.md` | 单独 assignment（已废弃，保留兼容）| ~1000 tokens |
+| `TEMPLATE_HANDOFF.md` | 单独 handoff（已废弃，保留兼容）| ~400 tokens |
+
+> **v4 建议**：统一使用 `TEMPLATE_BRIEF.md`，两文件合一，token 节省约 30%。
 
 ## Information exchange protocol
 
