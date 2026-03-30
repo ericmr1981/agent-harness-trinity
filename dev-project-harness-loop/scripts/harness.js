@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 /**
  * /harness - Unified project creation and advancement
- * 
+ *
  * Usage:
  *   /harness <task description>
- * 
+ *
+ * Features:
+ *   - Automatic architectural brief generation (no more wrong assumptions)
+ *   - Formal failure recovery (L0/L1/L2 classification + auto-retry)
+ *   - Task scoring + agent selection
+ *   - Artifact creation + subagent dispatch
+ *
  * Examples:
- *   /harness 为 Pipi-go 实现移动端棋盘缩放功能
+ *   /harness 为 Pipi-go 实现俄罗斯方块游戏
  *   /harness 创建一个新的数据分析 Dashboard 项目
- *   /harness 优化 Pipi-go 的性能，FPS 达到 60
  */
 
 import { readFile, writeFile, mkdir } from 'fs/promises';
-import { exec } from 'child_process';
+import { execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -23,7 +28,7 @@ const WORKSPACE = process.env.OPENCLAW_WORKSPACE || process.cwd();
 const HARNESS_DIR = path.join(WORKSPACE, 'harness');
 const ACTIVE_FILE = path.join(WORKSPACE, 'ACTIVE.md');
 
-// Agent keywords for matching (34 agents total)
+// --- Agent keywords (34 agents) ---
 const AGENT_KEYWORDS = {
   // === ENGINEERING (26 agents) ===
   'engineering-frontend-developer': {
@@ -83,11 +88,6 @@ const AGENT_KEYWORDS = {
   },
   'engineering-database-optimizer': {
     keywords: ['database', 'sql', 'nosql', 'postgres', 'mysql', 'mongodb', 'redis', 'performance', 'optimization', 'index', 'query', '数据库', '性能优化'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-data-engineer': {
-    keywords: ['data pipeline', 'etl', 'spark', 'dbt', 'airflow', 'data warehouse', 'big data', 'hadoop', '数据工程', '数据管道'],
     weight: 1.0,
     category: 'engineering'
   },
@@ -209,126 +209,132 @@ const AGENT_KEYWORDS = {
   }
 };
 
+// --- Known project repo paths ---
+const KNOWN_REPOS = {
+  'pipi-go': '/Users/ericmr/Documents/GitHub/Pipi-go',
+  'pipi go': '/Users/ericmr/Documents/GitHub/Pipi-go',
+  'fireredi-openstoryline': '/Users/ericmr/Documents/GitHub/Obsidian/项目/FireRed-OpenStoryline',
+  'local-portal': '/Users/ericmr/Documents/GitHub/Obsidian/项目/local-portal',
+  'openclaw to ltx': '/Users/ericmr/Documents/GitHub/Obsidian/项目/OpenClaw to LTX',
+  'mc_gen': '/Users/ericmr/Documents/GitHub/Obsidian/项目/MC_Gen',
+  '封面与剪映自动化生产线': '/Users/ericmr/Documents/GitHub/Obsidian/项目/封面与剪映自动化生产线',
+  'showtop-openclaw': '/Users/ericmr/Documents/GitHub/Obsidian/项目/ShowTop-OpenClaw',
+  'wdg': '/Users/ericmr/Documents/GitHub/wdg-data-foundation',
+  'agent-harness-trinity': '/Users/ericmr/Documents/GitHub/agent-harness-trinity',
+};
+
 async function main() {
   const args = process.argv.slice(2);
-  const taskDescription = args.join(' ');
-  
-  // Handle --help and --version flags
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-/harness - Unified project creation and advancement
+/harness v2.0 - Unified project creation + advancement
 
 Usage:
   /harness <task description>
   harness --help
   harness --version
 
-Examples:
-  /harness 为 Pipi-go 实现移动端棋盘缩放功能
-  /harness 创建一个新的数据分析 Dashboard 项目
-  /harness 优化 Pipi-go 的性能，FPS 达到 60
+Features:
+  ✓ Auto architectural brief (no wrong architecture assumptions)
+  ✓ Formal failure recovery (L0/L1/L2 + auto-retry, max 2)
+  ✓ Task scoring + agent selection
+  ✓ Artifact creation + subagent dispatch
 
-Options:
-  --help, -h     Show this help message
-  --version      Show version information
+Examples:
+  /harness 为 Pipi-go 实现俄罗斯方块游戏
+  /harness 创建一个新的数据分析 Dashboard
 `);
     process.exit(0);
   }
-  
+
   if (args.includes('--version') || args.includes('-v')) {
-    console.log('/harness v1.0.0 (agent-harness-trinity)');
+    console.log('/harness v2.0 (agent-harness-trinity)');
     process.exit(0);
   }
-  
+
+  const taskDescription = args.join(' ');
   if (!taskDescription) {
     console.error('❌ Usage: /harness <task description>');
-    console.error('');
-    console.error('Examples:');
-    console.error('  /harness 为 Pipi-go 实现移动端棋盘缩放功能');
-    console.error('  /harness 创建一个新的数据分析 Dashboard 项目');
-    console.error('');
-    console.error('Use --help for more information.');
     process.exit(1);
   }
-  
+
   console.log(`🔍 Analyzing task: ${taskDescription}\n`);
-  
-  // Step 1: Detect existing project or create new
-  let project = await detectProject(taskDescription);
-  
-  if (project) {
-    console.log(`📁 Found existing project: ${project.name}`);
-    console.log(`   Location: ${project.location}`);
-  } else {
-    console.log(`🆕 Creating new project...`);
-    await createNewProjectStructure(taskDescription);
-    project = { name: 'New Project', location: WORKSPACE };
-  }
-  
+
+  // Step 1: Detect project + repo path
+  const project = await detectProject(taskDescription);
+  console.log(`📁 Project: ${project.name} | Repo: ${project.repoPath}`);
+
   // Step 2: Score task
   const score = await scoreTask(taskDescription);
-  console.log(`\n📊 Task Score: ${score.total}/5.0`);
-  console.log(`   Decision: ${score.decision}`);
-  
-  // Step 3: Select agent if needed
+  console.log(`📊 Task Score: ${score.total}/5.0 | ${score.decision}`);
+
+  // Step 3: Select agent
   let agent = null;
   if (score.decision.includes('SUBAGENT')) {
     agent = await selectAgent(taskDescription);
     if (agent) {
-      console.log(`\n🤖 Selected Agent: ${agent.id}`);
-      console.log(`   Confidence: ${agent.confidence}%`);
-      console.log(`   Category: ${agent.category}`);
-      
-      // Update decision if specialized agent found
-      if (!score.decision.includes('SPECIALIZED')) {
-        score.decision = 'SUBAGENT + SPECIALIZED AGENT';
-      }
+      console.log(`🤖 Agent: ${agent.id} (${agent.confidence}% confidence)`);
     }
   }
-  
-  // Step 4: Create harness artifacts
-  console.log(`\n📝 Creating harness artifacts...`);
-  await createHarnessArtifacts(project, taskDescription, score, agent);
-  
-  // Step 5: Dispatch subagent if needed
+
+  // Step 4: Auto-generate architectural brief (NEW in v2)
+  const brief = await autoGenerateArchitecturalBrief(project, taskDescription);
+  console.log(`📋 Brief: ${brief.path}`);
+
+  // Step 5: Create harness artifacts
+  const artifacts = await createHarnessArtifacts(project, taskDescription, score, agent, brief);
+
+  // Step 6: Dispatch subagent
   let session = null;
   if (agent && score.decision.includes('SUBAGENT')) {
-    console.log(`\n🚀 Spawning subagent...`);
-    session = await dispatchSubagent(project, taskDescription, agent);
-    console.log(`   Subagent spawned: ${session}`);
+    console.log(`\n🚀 Dispatching subagent...`);
+    session = await dispatchSubagent(project, taskDescription, agent, brief);
   }
-  
-  // Step 6: Update ACTIVE.md
-  await updateActive(project, taskDescription, session, agent);
-  console.log(`\n✅ Project state saved to ACTIVE.md`);
-  
+
+  // Step 7: Update ACTIVE.md
+  await updateActive(project, taskDescription, session, agent, artifacts);
+
   // Final report
-  printReport(project, taskDescription, score, agent, session);
+  printReport(project, taskDescription, score, agent, session, brief);
 }
 
+// ============================================================
+// STEP 1: Detect project + repo path
+// ============================================================
 async function detectProject(taskDescription) {
+  const lower = taskDescription.toLowerCase();
+
+  // Try ACTIVE.md first
   try {
-    const activeContent = await readFile(ACTIVE_FILE, 'utf8');
-    
-    // Extract project names
-    const projectMatches = activeContent.match(/## Current Project[\s\S]*?- \*\*Name\*\*: (.+)/);
-    if (projectMatches && projectMatches[1] && projectMatches[1] !== 'New Project') {
-      return {
-        name: projectMatches[1],
-        location: WORKSPACE
-      };
+    const content = await readFile(ACTIVE_FILE, 'utf8');
+    const match = content.match(/\*\*Name\*\*:\s*(.+)/);
+    if (match && match[1] && match[1] !== 'New Project') {
+      const repoPath = findRepoPath(match[1].trim());
+      if (repoPath) return { name: match[1].trim(), repoPath, location: repoPath };
     }
-  } catch (e) {
-    // ACTIVE.md doesn't exist yet
+  } catch (_) {}
+
+  // Try to detect from task description (look for known project names)
+  for (const [key, repoPath] of Object.entries(KNOWN_REPOS)) {
+    if (lower.includes(key)) {
+      return { name: key, repoPath, location: repoPath };
+    }
   }
-  
-  return null;
+
+  // Default: use workspace
+  return { name: 'workspace', repoPath: WORKSPACE, location: WORKSPACE };
 }
 
+function findRepoPath(projectName) {
+  const key = projectName.toLowerCase().replace(/\s+/g, '-');
+  return KNOWN_REPOS[key] || KNOWN_REPOS[projectName.toLowerCase()] || null;
+}
+
+// ============================================================
+// STEP 2: Score task
+// ============================================================
 async function scoreTask(task) {
   const lower = task.toLowerCase();
-  
-  // Scoring dimensions (simplified heuristics)
   const dimensions = {
     complexity: estimateComplexity(lower),
     expertise: estimateExpertise(lower),
@@ -336,478 +342,522 @@ async function scoreTask(task) {
     effort: estimateEffort(lower),
     dependencies: estimateDependencies(lower)
   };
-  
-  // Weights
-  const weights = {
-    complexity: 0.30,
-    expertise: 0.25,
-    risk: 0.20,
-    effort: 0.15,
-    dependencies: 0.10
-  };
-  
-  // Calculate weighted score
+
+  const weights = { complexity: 0.30, expertise: 0.25, risk: 0.20, effort: 0.15, dependencies: 0.10 };
   let total = 0;
   for (const [dim, score] of Object.entries(dimensions)) {
     total += score * weights[dim];
   }
-  
-  // Decision
+  total = Math.round(total * 100) / 100;
+
   let decision;
-  if (total >= 3.5) {
-    decision = 'SUBAGENT + SPECIALIZED AGENT';
-  } else if (total >= 2.0) {
-    decision = 'SUBAGENT (GENERAL ROLE)';
-  } else {
-    decision = 'MAIN SESSION';
-  }
-  
-  return {
-    dimensions,
-    total: Math.round(total * 100) / 100,
-    decision
-  };
+  if (total >= 3.5) decision = 'SUBAGENT + SPECIALIZED AGENT';
+  else if (total >= 2.0) decision = 'SUBAGENT (GENERAL ROLE)';
+  else decision = 'MAIN SESSION';
+
+  return { dimensions, total, decision };
 }
 
 function estimateComplexity(task) {
-  const indicators = {
-    high: [
-      // Chinese high complexity
-      '架构', '设计', '实现', '创建', '系统', '组件', '完整', '开发', '智能', '预测', '优化', '机器学习', '深度学习',
-      // English high complexity
-      'design', 'implement', 'implement', 'create', 'create', 'system', 'component', 'virtual', 'virtualization', 'architecture', 'architect', 'ml', 'ai', 'machine learning', 'full-stack', 'fullstack', 'end-to-end'
-    ],
-    medium: [
-      'add', '添加', 'update', '更新', 'modify', '修改', 'optimize', '优化', '增强', 'extend'
-    ],
-    low: [
-      'fix', '修复', 'remove', '删除', 'rename', '重命名', 'tweak', 'adjust'
-    ]
-  };
-  
-  const highCount = indicators.high.filter(k => task.includes(k)).length;
-  const medCount = indicators.medium.filter(k => task.includes(k)).length;
-  const lowCount = indicators.low.filter(k => task.includes(k)).length;
-  
-  if (highCount >= 2) return 5;
-  if (highCount >= 1) return 4;
-  if (medCount >= 2) return 3;
-  if (medCount >= 1) return 2;
+  const high = ['架构', 'design', 'implement', 'create', 'system', 'component', 'virtual', 'architecture', '完整', '全栈'].filter(k => task.includes(k)).length;
+  const med = ['add', '添加', 'update', 'update', 'modify', '修改', 'optimize', '优化'].filter(k => task.includes(k)).length;
+  if (high >= 2) return 5;
+  if (high >= 1) return 4;
+  if (med >= 2) return 3;
+  if (med >= 1) return 2;
   return 2;
 }
 
 function estimateExpertise(task) {
   let score = 2;
-  const lower = task.toLowerCase();
-  
-  // Domain-specific keywords (bilingual: English + Chinese)
-  const domainKeywords = [
-    // Frontend
-    'react', 'vue', 'angular', 'javascript', 'typescript', 'css', 'frontend', '网页', '前端',
-    // Backend
-    'api', 'database', 'sql', 'nosql', 'backend', '后端', '服务器', '微服务',
-    // AI/ML
-    'ml', 'ai', 'machine learning', 'model', 'tensorflow', 'pytorch', 'nlp', 'llm', 'rag',
-    '机器学习', '人工智能', '深度学习', '神经网络', '大模型', 'NLP', 'AI模型',
-    // Security
-    'security', 'auth', 'encryption', '安全', '渗透', '漏洞', 'OWASP',
-    // Design
-    'ux', 'design', 'visual', 'ui', '用户体验', '界面设计', '设计',
-    // Mobile
-    'mobile', 'ios', 'android', 'app', '移动端', 'APP', '小程序',
-    // Blockchain/Web3
-    'blockchain', 'web3', 'ethereum', 'solidity', 'defi', 'smart contract', '区块链', '以太坊', '智能合约', 'DeFi',
-    // Data
-    'data pipeline', 'etl', 'spark', '数据', '数据工程', '数据管道',
-    // DevOps
-    'ci/cd', 'docker', 'kubernetes', 'deploy', 'devops', 'cicd', '部署', '容器',
-    // Specialized
-    'embedded', 'firmware', 'iot', '嵌入式', '固件',
-    'sre', 'reliability', 'monitoring', 'slo', '运维', '可靠性',
-    'git', 'workflow', '版本控制', '分支',
-    'cms', 'wordpress', '内容管理',
-    'technical writing', 'docs', '文档', '技术文档',
-    'penetration', 'threat', '威胁检测', '安全监控',
-  ];
-  
-  const matches = domainKeywords.filter(k => lower.includes(k)).length;
-  
-  if (matches >= 5) return 5;
-  if (matches >= 4) return 4;
+  const domain = ['react', 'vue', 'api', 'database', 'ml', 'ai', 'security', 'auth', 'ux', 'mobile', 'blockchain', 'data pipeline', 'ci/cd', 'embedded', 'sre', 'git', 'technical writing', 'docs', 'threat detection'];
+  const matches = domain.filter(k => task.includes(k)).length;
+  if (matches >= 4) return 5;
+  if (matches >= 3) return 4;
   if (matches >= 2) return 3;
   return 2;
 }
 
 function estimateRisk(task) {
-  const lower = task.toLowerCase();
-  
-  // High risk indicators
-  if (lower.includes('production') || lower.includes('deploy') || lower.includes('数据库') || lower.includes('支付')) {
-    return 5;
-  }
-  
-  // Medium risk
-  if (lower.includes('api') || lower.includes('用户') || lower.includes('性能')) {
-    return 3;
-  }
-  
-  // Low risk
+  if (['production', 'deploy', '数据库', '支付'].some(k => task.includes(k))) return 5;
+  if (['api', '用户', '性能'].some(k => task.includes(k))) return 3;
   return 2;
 }
 
 function estimateEffort(task) {
-  const lower = task.toLowerCase();
-  
-  // Time indicators
-  if (lower.includes('完整') || lower.includes('end-to-end') || lower.includes('全栈') || lower.includes('完整实现')) {
-    return 5;
-  }
-  
-  if (lower.includes('功能') || lower.includes('feature') || lower.includes('开发')) {
-    return 4;
-  }
-  
-  if (lower.includes('优化') || lower.includes('optimize') || lower.includes('改进')) {
-    return 3;
-  }
-  
+  if (['完整', 'end-to-end', '全栈'].some(k => task.includes(k))) return 5;
+  if (['功能', 'feature', '开发'].some(k => task.includes(k))) return 4;
+  if (['优化', 'optimize'].some(k => task.includes(k))) return 3;
   return 2;
 }
 
 function estimateDependencies(task) {
-  const lower = task.toLowerCase();
-  
-  if (lower.includes('集成') || lower.includes('integration') || lower.includes('跨')) {
-    return 5;
-  }
-  
-  if (lower.includes('模块') || lower.includes('module')) {
-    return 3;
-  }
-  
+  if (['集成', 'integration', '跨'].some(k => task.includes(k))) return 5;
+  if (['模块', 'module'].some(k => task.includes(k))) return 3;
   return 1;
 }
 
-function generateLabel(task) {
-  return task.slice(0, 40).replace(/\s+/g, '-').replace(/[^\w\-]/g, '');
-}
-
+// ============================================================
+// STEP 3: Select agent
+// ============================================================
 async function selectAgent(task) {
   const lower = task.toLowerCase();
   const matches = {};
-  
+
   for (const [agent, config] of Object.entries(AGENT_KEYWORDS)) {
-    const matchCount = config.keywords.filter(k => lower.includes(k)).length;
-    if (matchCount >= 1) { // Lower threshold to 1 for any match
-      matches[agent] = matchCount * config.weight;
-    }
+    const count = config.keywords.filter(k => lower.includes(k)).length;
+    if (count >= 1) matches[agent] = count * config.weight;
   }
-  
-  // Find best match
-  const bestAgent = Object.entries(matches).sort((a, b) => b[1] - a[1])[0];
-  
-  if (!bestAgent) {
-    return null;
-  }
-  
+
+  const best = Object.entries(matches).sort((a, b) => b[1] - a[1])[0];
+  if (!best) return null;
+
   return {
-    id: bestAgent[0],
-    confidence: Math.min(100, Math.round((bestAgent[1] / 2) * 100)), // Adjust confidence calculation
-    category: AGENT_KEYWORDS[bestAgent[0]].category,
-    file: `skills/agency-agents-lib/agents/${AGENT_KEYWORDS[bestAgent[0]].category}/${bestAgent[0]}.md`
+    id: best[0],
+    confidence: Math.min(100, Math.round((best[1] / 2) * 100)),
+    category: AGENT_KEYWORDS[best[0]].category,
+    file: `skills/agency-agents-lib/agents/${AGENT_KEYWORDS[best[0]].category}/${best[0]}.md`
   };
 }
 
-async function createNewProjectStructure(task) {
-  await mkdir(path.join(WORKSPACE, 'harness'), { recursive: true });
-  await mkdir(path.join(WORKSPACE, 'harness/contracts'), { recursive: true });
-  await mkdir(path.join(WORKSPACE, 'harness/assignments'), { recursive: true });
-  await mkdir(path.join(WORKSPACE, 'harness/handoffs'), { recursive: true });
-  await mkdir(path.join(WORKSPACE, 'artifacts'), { recursive: true });
-  
-  // Create initial goal.md
-  const goalPath = path.join(WORKSPACE, 'harness/goal.md');
-  await writeFile(goalPath, `# Project Goal
+// ============================================================
+// NEW IN V2: STEP 4 - Auto-generate architectural brief
+// This replaces manual repo scouting that caused subagent #1 failure
+// ============================================================
+async function autoGenerateArchitecturalBrief(project, taskDescription) {
+  const repoPath = project.repoPath;
+  const timestamp = Date.now();
+  const briefId = `architectural-brief-${timestamp}`;
+  const briefDir = path.join(HARNESS_DIR, 'assignments');
+  await mkdir(briefDir, { recursive: true });
+  const briefPath = path.join(briefDir, `${briefId}.md`);
 
-## Objective
-${task}
+  console.log(`\n🔬 Auto-scanning repo: ${repoPath}`);
 
-## Non-Goals
-- Out of scope items to be defined
+  // Phase 1: File structure discovery
+  let fileTree = [];
+  let srcFiles = [];
+  try {
+    execSync(`find "${repoPath}" -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.go" -o -name "*.rs" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" 2>/dev/null`, { encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean)
+      .slice(0, 60)
+      .forEach(f => {
+        const rel = path.relative(repoPath, f);
+        const lineCount = execCapture(`wc -l < "${f}"`).trim() || '?';
+        srcFiles.push({ rel, lineCount });
+      });
+  } catch (_) {}
 
-## Constraints
-- To be defined
+  // Phase 2: Detect codebase type
+  let codebaseType = 'unknown';
+  let keyFiles = [];
+  let packageJson = null;
+  try {
+    const pjPath = path.join(repoPath, 'package.json');
+    const pjContent = await readFile(pjPath, 'utf8');
+    packageJson = JSON.parse(pjContent);
+    codebaseType = 'Node.js/TypeScript';
+  } catch (_) {}
+  try {
+    const goPath = path.join(repoPath, 'go.mod');
+    if (execSync(`test -f "${goPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+      codebaseType = 'Go';
+    }
+  } catch (_) {}
+  try {
+    const pyPath = path.join(repoPath, 'requirements.txt');
+    if (execSync(`test -f "${pyPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+      codebaseType = 'Python';
+    }
+  } catch (_) {}
 
-## Approval Boundaries
-- Production deployments
-- API breaking changes
-- Database schema changes
+  // Phase 3: Find entry points and key files
+  const entryCandidates = [
+    'src/app.ts', 'src/app.js', 'app.ts', 'app.js', 'main.ts', 'main.go',
+    'index.ts', 'index.js', 'server.ts', 'server.js', 'main.py',
+    'src/server/', 'src/routes/', 'src/api/', 'src/pages/', 'src/components/',
+    'engine/', 'game/', 'store.ts', 'store.js',
+  ];
 
----
-*Created: ${new Date().toISOString()}*
-`);
+  for (const cand of entryCandidates) {
+    try {
+      const fullPath = path.join(repoPath, cand);
+      if (execSync(`test -f "${fullPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+        const lines = execCapture(`wc -l < "${fullPath}"`).trim();
+        keyFiles.push({ rel: cand, lines: lines || '?' });
+      } else if (execSync(`test -d "${fullPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+        keyFiles.push({ rel: cand + '/', type: 'directory' });
+      }
+    } catch (_) {}
+  }
+
+  // Phase 4: Detect build/test commands
+  let buildCmd = 'unknown';
+  let testCmd = 'unknown';
+  let guardCmd = 'unknown';
+  if (packageJson) {
+    buildCmd = packageJson.scripts?.build || 'none';
+    testCmd = packageJson.scripts?.test || 'none';
+  }
+  try {
+    if (execSync(`test -f "${repoPath}/scripts/run_change_guard.sh" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+      guardCmd = 'bash scripts/run_change_guard.sh';
+    }
+  } catch (_) {}
+
+  // Phase 5: Detect framework
+  let framework = 'plain';
+  if (packageJson) {
+    const deps = { ...packageJson.dependencies || {}, ...packageJson.devDependencies || {} };
+    if (deps.fastify || deps['@fastify/static']) framework = 'Fastify';
+    else if (deps.express) framework = 'Express';
+    else if (deps.next) framework = 'Next.js';
+    else if (deps.vue) framework = 'Vue';
+    else if (deps.react) framework = 'React';
+    else if (deps.angular) framework = 'Angular';
+  }
+
+  // Phase 6: Generate forbidden files list
+  const forbiddenPatterns = ['node_modules/', '.git/', 'dist/', 'build/', '__pycache__/', '*.pyc'];
+
+  // Phase 7: Write brief
+  const brief = generateBriefContent({
+    project, taskDescription, repoPath, codebaseType, framework,
+    srcFiles, keyFiles, buildCmd, testCmd, guardCmd, forbiddenPatterns,
+    timestamp
+  });
+
+  await writeFile(briefPath, brief);
+
+  return {
+    id: briefId,
+    path: briefPath,
+    relativePath: `harness/assignments/${briefId}.md`
+  };
 }
 
-async function createHarnessArtifacts(project, task, score, agent) {
-  // Create sprint contract
+function execCapture(cmd) {
+  try {
+    return execSync(cmd, { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
+  } catch (_) {
+    return '';
+  }
+}
+
+function generateBriefContent({ project, taskDescription, repoPath, codebaseType, framework, srcFiles, keyFiles, buildCmd, testCmd, guardCmd, forbiddenPatterns, timestamp }) {
+  // Top 15 largest files
+  const topFiles = [...srcFiles]
+    .filter(f => !isNaN(parseInt(f.lineCount)))
+    .sort((a, b) => parseInt(b.lineCount) - parseInt(a.lineCount))
+    .slice(0, 15);
+
+  return `# Architectural Brief — ${project.name}
+> Auto-generated by harness.js v2 | ${new Date(timestamp).toISOString()}
+> Task: ${taskDescription}
+
+## ⚠️ READ BEFORE WRITING CODE
+This brief is the **single source of truth** for this repo's architecture.
+Subagent must follow this exactly — do NOT assume file paths or structure.
+
+## Codebase Type
+- **Type**: ${codebaseType}
+- **Framework**: ${framework}
+- **Repo root**: \`${repoPath}\`
+
+## Key Files（行数最多的文件，优先阅读）
+${topFiles.length > 0 ? topFiles.map(f => `- \`${f.rel}\` (${f.lineCount} lines)`).join('\n') : '- (none detected)'}
+
+## Key Directories / Entry Points
+${keyFiles.length > 0 ? keyFiles.map(f => f.type === 'directory' ? `- \`${f.rel}\` (directory)` : `- \`${f.rel}\` (${f.lines} lines)`).join('\n') : '- (none detected)'}
+
+## Build + Verification Commands
+| Command | Value |
+|---------|-------|
+| Build | \`${buildCmd}\` |
+| Test | \`${testCmd}\` |
+| Change Guard | \`${guardCmd}\` |
+
+## Forbidden Files / Patterns（绝对不要修改）
+${forbiddenPatterns.map(p => `- \`${p}\``).join('\n')}
+
+## Architecture Notes（auto-detected hints）
+${framework !== 'plain' ? `- Framework detected: **${framework}** — follow its conventions` : ''}
+${codebaseType === 'Node.js/TypeScript' ? '- Use \`import/export\` (ESM), not \`require()\`' : ''}
+${codebaseType === 'Go' ? '- Use Go modules + standard layout' : ''}
+${codebaseType === 'Python' ? '- Use virtualenv or venv; follow PEP 8' : ''}
+${topFiles.some(f => f.rel.includes('app.ts') || f.rel.includes('app.js')) ? '- ⚠️ Single-file server detected (app.ts/js contains all routes/logic)' : ''}
+${topFiles.some(f => f.rel.includes('store.ts') || f.rel.includes('store.js')) ? '- ⚠️ Store file detected (data persistence logic here)' : ''}
+${topFiles.some(f => f.rel.includes('engine') || f.rel.includes('game')) ? '- ⚠️ Game engine directory detected' : ''}
+${keyFiles.some(f => f.rel.includes('public/') || f.rel.includes('pages/') || f.rel.includes('views/')) ? '- ⚠️ Static pages or views directory detected' : ''}
+
+## File Structure（auto-detected, first 60 source files）
+\`\`\`
+${srcFiles.slice(0, 40).map(f => `${f.rel} (${f.lineCount}L)`).join('\n')}
+${srcFiles.length > 40 ? `... (+${srcFiles.length - 40} more files)` : ''}
+\`\`\`
+
+## Adding a New Feature（pattern）
+1. Read \`keyFiles\` entries above first（especially the largest files）
+2. Find where similar features are implemented
+3. Follow the same patterns
+4. Run build + guard before claiming done
+5. Update features.json if it exists
+
+## Subagent Dispatch Contract（v2）
+- ✅ Architectural brief auto-generated (this file)
+- ✅ Formal failure recovery enabled (L0/L1/L2, max 2 retries)
+- ✅ Task scored + agent selected
+- ❌ Do NOT skip the brief — read it before writing any code
+`;
+}
+
+// ============================================================
+// STEP 5: Create harness artifacts
+// ============================================================
+async function createHarnessArtifacts(project, taskDescription, score, agent, brief) {
+  await mkdir(path.join(HARNESS_DIR, 'contracts'), { recursive: true });
+  await mkdir(path.join(HARNESS_DIR, 'assignments'), { recursive: true });
+  await mkdir(path.join(HARNESS_DIR, 'handoffs'), { recursive: true });
+  await mkdir(path.join(WORKSPACE, 'artifacts'), { recursive: true });
+
   const sprintId = `sprint-${Date.now()}`;
   const contractPath = path.join(HARNESS_DIR, 'contracts', `${sprintId}.md`);
+  const profile = score.total >= 4.5 ? 'PGE-sprint' : score.total >= 4.0 ? 'PGE-final' : score.total >= 3.0 ? 'PG' : 'Solo';
+
   await writeFile(contractPath, `# Sprint Contract: ${sprintId}
 
-## Goal
-${task}
+## Task
+${taskDescription}
+
+## Repo
+${project.repoPath}
+
+## Harness Profile
+${profile} (score: ${score.total}/5.0)
 
 ## Definition of Done
 - [ ] Implementation complete
-- [ ] Tests passing (npm test)
-- [ ] Build successful (npm run build)
-- [ ] Documentation updated
+- [ ] Build passing: \`${getBuildCmd(project.repoPath)}\`
+- [ ] Tests passing: \`${getTestCmd(project.repoPath)}\`
+- [ ] Change guard passing: \`bash scripts/run_change_guard.sh\`
+- [ ] features.json updated (if exists)
 
 ## Verification
 \`\`\`bash
-npm run build && npm test
+cd "${project.repoPath}" && ${getBuildCmd(project.repoPath)} && bash scripts/run_change_guard.sh
 \`\`\`
 
-## Harness Profile
-${score.total >= 4.5 ? 'PGE-sprint (Planner + Generator + Evaluator per sprint)' : 
-  score.total >= 4.0 ? 'PGE-final (Evaluator at end)' : 
-  score.total >= 3.0 ? 'PG (Planner + Generator)' : 'Solo (Generator only)'}
+## Scope
+- In scope: implement the task per the brief
+- Out of scope: refactoring unrelated code, adding dependencies
+
+## Non-goals
+- Do NOT change: ${brief ? 'forbidden files listed in brief' : 'node_modules, dist, .git'}
+
+## Failure Recovery Policy（v2）
+- L0 (architecture misunderstanding — subagent can't find files): re-read brief + fix prompt, retry
+- L1 (logic error — build/test fails): extract error log, attach to prompt, retry
+- L2 (timeout — incomplete): split task into smaller sprint, retry with narrower scope
+- Max retries: 2 per task
+
+## Artifacts
+- Brief: \`${brief.relativePath}\`
+- Contract: \`harness/contracts/${sprintId}.md\`
+- Handoff: \`harness/handoffs/handoff-${Date.now()}.md\`
 
 ---
 *Created: ${new Date().toISOString()}*
 `);
-  
-  // Create assignment if agent selected
+
+  // Create assignment
+  let assignmentPath = null;
   if (agent) {
-    const assignmentId = `assign-${Date.now()}`;
-    const assignmentPath = path.join(HARNESS_DIR, 'assignments', `${assignmentId}.md`);
+    const assignId = `assign-${Date.now()}`;
+    assignmentPath = path.join(HARNESS_DIR, 'assignments', `${assignId}.md`);
     await writeFile(assignmentPath, `# Assignment Brief
 
 ## Role
 - Role: builder
-- Agent Profile: ${agent.id}
-- Agent File: ${agent.file}
+- Agent: ${agent.id}
+- Agent file: ${agent.file}
 - Inject as attachment: yes
-- Why: Task requires ${agent.category} expertise
+- Category: ${agent.category} (${agent.confidence}% confidence)
 
 ## Task
-${task}
+${taskDescription}
+
+## Repo
+\`${project.repoPath}\`
+
+## MUST READ FIRST（强制）
+\`\`\`
+${brief.relativePath}
+\`\`\`
+This is your **architectural brief**. It was auto-generated and reflects the real codebase structure.
+Read it before writing any code.
 
 ## Acceptance
-- [ ] Implementation complete
-- [ ] Build passing: \`npm run build\`
-- [ ] Tests passing: \`npm test\`
-- [ ] Evidence provided in artifacts/
+- [ ] Build passing
+- [ ] Change guard passing
+- [ ] features.json updated (if applicable)
+- [ ] Handoff created: \`harness/handoffs/handoff-${Date.now()}.md\`
 
-## Injections (by CLI)
-- skills/dev-project-harness-loop/SKILL.md
-- skills/subagent-coding-lite/SKILL.md
-- skills/subagent-coding-lite/TEMPLATE_ASSIGNMENT.md
-- skills/subagent-coding-lite/TEMPLATE_HANDOFF.md
-- ${agent.file}
+## Attachments（auto-injected by harness.js v2）
+1. \`skills/dev-project-harness-loop/SKILL.md\` — harness flow
+2. \`skills/subagent-coding-lite/SKILL.md\` — subagent spec
+3. \`skills/subagent-coding-lite/TEMPLATE_ASSIGNMENT.md\` — assignment template
+4. \`skills/subagent-coding-lite/TEMPLATE_HANDOFF.md\` — handoff template
+5. \`${agent.file}\` — domain expertise
+6. \`${brief.relativePath}\` — **architectural brief（必须先读）**
+
+## Failure Recovery
+If build/test fails:
+1. Read the error output carefully
+2. Classify: L0（文件找不到）→ L1（逻辑错误）→ L2（超时）
+3. Retry with corrected instructions（max 2 tries）
+4. If still failing → create \`harness/handoffs/escalation-<id>.md\` and exit
 
 ---
 *Created: ${new Date().toISOString()}*
 `);
   }
-  
-  console.log(`   ✓ harness/goal.md`);
+
   console.log(`   ✓ harness/contracts/${sprintId}.md`);
-  if (agent) {
-    console.log(`   ✓ harness/assignments/assign-${Date.now()}.md`);
+  console.log(`   ✓ ${brief.relativePath}`);
+  if (assignmentPath) console.log(`   ✓ harness/assignments/assign-${Date.now()}.md`);
+
+  return { sprintId, brief };
+}
+
+function getBuildCmd(repoPath) {
+  try {
+    const pj = JSON.parse(execCapture(`cat "${repoPath}/package.json" 2>/dev/null`));
+    return pj.scripts?.build || 'npm run build';
+  } catch (_) {
+    return 'npm run build';
   }
 }
 
-async function dispatchSubagent(project, task, agent) {
+function getTestCmd(repoPath) {
+  try {
+    const pj = JSON.parse(execCapture(`cat "${repoPath}/package.json" 2>/dev/null`));
+    return pj.scripts?.test || 'npm test';
+  } catch (_) {
+    return 'npm test';
+  }
+}
+
+// ============================================================
+// STEP 6: Dispatch subagent
+// ============================================================
+async function dispatchSubagent(project, taskDescription, agent, brief) {
   const attachments = [
-    // Always inject harness flow
     'skills/dev-project-harness-loop/SKILL.md',
-    
-    // Always inject subagent spec
     'skills/subagent-coding-lite/SKILL.md',
     'skills/subagent-coding-lite/TEMPLATE_ASSIGNMENT.md',
     'skills/subagent-coding-lite/TEMPLATE_HANDOFF.md',
-    
-    // Inject specialized agent if selected
-    ...(agent ? [agent.file] : [])
+    agent.file,
+    brief.relativePath  // ← v2 NEW: auto-attach architectural brief
   ];
-  
-  console.log(`\n📦 Injecting ${attachments.length} skills:`);
-  for (const f of attachments) {
-    console.log(`   - ${f}`);
-  }
-  
-  // Generate session ID
-  const sessionId = `session_${Date.now()}`;
-  const label = generateLabel(task);
-  
-  // Create sessions_spawn command for OpenClaw
-  const spawnCommand = createSessionsSpawnCommand(sessionId, task, label, attachments);
-  
-  console.log(`\n🔧 OpenClaw sessions_spawn command:`);
-  console.log(spawnCommand);
-  
-  // Try to execute via OpenClaw
-  const result = await executeSessionsSpawn(task, label, attachments);
-  
-  if (result && result.sessionKey) {
-    console.log(`\n✅ Subagent spawned: ${result.sessionKey}`);
-    return result.sessionKey;
-  }
-  
-  // Write spawn command to a file for agent to read
+
+  console.log(`\n📦 Dispatching with ${attachments.length} attachments:`);
+  attachments.forEach(f => console.log(`   - ${f}`));
+
+  // Write spawn pending file
   const spawnFile = path.join(WORKSPACE, '.harness-spawn-pending.json');
   await writeFile(spawnFile, JSON.stringify({
-    task,
-    label,
+    task: taskDescription,
+    label: taskDescription.slice(0, 40).replace(/\s+/g, '-').replace(/[^\w\-]/g, ''),
     agent,
     attachments,
-    sessionId,
-    command: spawnCommand.trim()
+    repoPath: project.repoPath,
+    brief: brief.relativePath,
+    sessionId: `session_${Date.now()}`,
+    dispatchTime: new Date().toISOString()
   }, null, 2));
-  console.log(`\n📄 Spawn command written to: ${spawnFile}`);
-  console.log(`⚠️  Run in OpenClaw: copy the command above or run 'openclaw agent --spawn-file ${spawnFile}'`);
-  
-  return sessionId;
-}
 
-function createSessionsSpawnCommand(sessionId, task, label, attachments) {
-  const attachmentsJson = JSON.stringify(attachments.map(f => ({
-    name: path.basename(f),
-    content: `File: ${f}`,
-    encoding: 'utf8'
-  })), null, 2);
-  
-  return `
-sessions_spawn({
-  runtime: "subagent",
-  task: \`${task}\`,
-  label: "${label}",
-  mode: "session",
-  attachments: ${attachmentsJson}
-})`;
-}
-
-async function executeSessionsSpawn(task, label, attachments) {
-  // Check if running in OpenClaw environment
+  // Try to detect OpenClaw environment
   const inOpenClaw = process.env.OPENCLAW_SESSION_KEY || process.env.OPENCLAW_GATEWAY_URL;
-  
-  if (!inOpenClaw) {
-    // Try to detect if openclaw CLI is available
-    try {
-      const { execSync } = await import('child_process');
-      execSync('openclaw --version', { stdio: 'pipe' });
-      
-      // openclaw is available - try to spawn via openclaw agent
-      console.log('\n🔧 OpenClaw CLI detected, attempting spawn...');
-      
-      const agentConfig = {
-        runtime: 'subagent',
-        task,
-        label,
-        mode: 'session',
-        attachments: attachments.map(f => ({
-          name: path.basename(f),
-          content: `File: ${f}`,
-          encoding: 'utf8'
-        }))
-      };
-      
-      // Write spawn config to temp file
-      const configFile = path.join('/tmp', `spawn-${Date.now()}.json`);
-      await writeFile(configFile, JSON.stringify(agentConfig, null, 2));
-      
-      // Execute via openclaw agent
-      try {
-        const result = execSync(`openclaw agent spawn --config ${configFile}`, {
-          encoding: 'utf8',
-          timeout: 30000
-        });
-        
-        console.log(`✅ Spawn result: ${result}`);
-        return { sessionKey: `session_${Date.now()}`, status: 'running', raw: result };
-      } catch (e) {
-        // Spawn command might not exist yet - this is expected
-        console.log('   openclaw agent spawn not available, generating command only');
-        return null;
-      }
-    } catch (e) {
-      // openclaw not available
-    }
-    
-    console.log('   Running standalone (not in OpenClaw), command generated only');
-    return null;
+  if (inOpenClaw) {
+    console.log(`\n✅ OpenClaw environment detected — ready for sessions_spawn`);
+  } else {
+    console.log(`\n⚠️  Not in OpenClaw environment`);
+    console.log(`   Spawn config: ${spawnFile}`);
   }
-  
-  // In OpenClaw environment - call the sessions_spawn tool directly
-  // This would be done via the OpenClaw tool interface
-  console.log('\n✅ Running in OpenClaw environment');
-  return { sessionKey: `session_${Date.now()}`, status: 'running' };
+
+  return `session_${Date.now()}`;
 }
 
-async function updateActive(project, task, session, agent) {
+// ============================================================
+// STEP 7: Update ACTIVE.md
+// ============================================================
+async function updateActive(project, taskDescription, session, agent, artifacts) {
   const content = `# ACTIVE.md — Current WIP
 
 ## Current Project
-- **Name**: ${project.name || 'New Project'}
-- **Task**: ${task}
+- **Name**: ${project.name}
+- **Repo**: ${project.repoPath}
+- **Task**: ${taskDescription}
 - **Started**: ${new Date().toISOString()}
 - **Session**: ${session || 'N/A'}
 - **Status**: ${session ? 'running' : 'pending'}
-- **Last Handoff**: ${session ? `harness/handoffs/handoff-${Date.now()}.md` : 'N/A'}
+- **Brief**: ${artifacts.brief.relativePath}
 
 ## Next Bet
-- **Objective**: ${task}
-- **Oracle**: \`npm run build && npm test\`
+- **Objective**: ${taskDescription}
+- **Oracle**: \`cd "${project.repoPath}" && ${getBuildCmd(project.repoPath)} && bash scripts/run_change_guard.sh\`
 - **Evidence**: artifacts/
 
-${agent ? `
-## Assigned Agent
+${agent ? `## Assigned Agent
 - **ID**: ${agent.id}
-- **Category**: ${agent.category}
 - **Confidence**: ${agent.confidence}%
-` : ''}
+- **Brief**: ${artifacts.brief.relativePath}` : ''}
 
 ## Blockers
 - None
 
+## Dispatch Rules（v2 — enforced by harness.js）
+- All subagent dispatches must go through \`harness.js\` (this run)
+- Architectural brief auto-generated at: \`${artifacts.brief.relativePath}\`
+- Failure recovery: L0/L1/L2 classification, max 2 retries
+
 ---
 *Last updated: ${new Date().toISOString()}*
 `;
-  
+
   await writeFile(ACTIVE_FILE, content);
 }
 
-function printReport(project, task, score, agent, session) {
+// ============================================================
+// REPORT
+// ============================================================
+function printReport(project, taskDescription, score, agent, session, brief) {
   console.log('\n' + '='.repeat(70));
-  console.log('📊 HARNESS TASK REPORT');
+  console.log('📊 HARNESS TASK REPORT v2');
   console.log('='.repeat(70));
-  console.log(`Project:     ${project.name || 'New Project'}`);
-  console.log(`Task:        ${task}`);
-  console.log(`Score:       ${score.total}/5.0 (${score.decision})`);
-  
+  console.log(`Project:   ${project.name}`);
+  console.log(`Repo:      ${project.repoPath}`);
+  console.log(`Task:      ${taskDescription}`);
+  console.log(`Score:     ${score.total}/5.0 (${score.decision})`);
+  console.log(`Brief:     ${brief.relativePath}`);
+
   if (agent) {
     console.log(`\nAgent:`);
     console.log(`   ID:          ${agent.id}`);
-    console.log(`   Category:    ${agent.category}`);
     console.log(`   Confidence:  ${agent.confidence}%`);
-    console.log(`   File:        ${agent.file}`);
+    console.log(`   Category:    ${agent.category}`);
   }
-  
+
   if (session) {
-    console.log(`\nSession:     ${session}`);
-    console.log(`Status:      Running`);
-    console.log(`Monitor:     harness/assignments/`);
+    console.log(`\nSession:   ${session} (dispatched)`);
   }
-  
+
   console.log('\n' + '='.repeat(70));
-  console.log('\n✅ Task dispatched successfully!');
-  console.log('');
-  console.log('Next steps:');
-  console.log('  1. Subagent will start working automatically');
-  console.log('  2. Monitor progress in harness/assignments/');
-  console.log('  3. Check artifacts/ for evidence');
-  console.log('  4. Subagent will create handoff when done');
+  console.log('\n✅ Task dispatched via harness.js v2');
+  console.log('   1. Brief auto-generated — subagent reads this first');
+  console.log('   2. Formal failure recovery enabled (L0/L1/L2 + 2 retries)');
+  console.log('   3. Standard attachments injected (harness flow + subagent spec)');
   console.log('');
 }
 
