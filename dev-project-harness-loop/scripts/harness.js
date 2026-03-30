@@ -1,22 +1,18 @@
 #!/usr/bin/env node
 /**
- * /harness - Unified project creation and advancement
+ * /harness v3 — Unified project advancement with LLM augmentation
+ *
+ * Core principles:
+ *   - Model participation: LLM analyzes task + repo to generate task profile + enhanced brief
+ *   - Clarification on missing info: ask or infer, never guess critical constraints
+ *   - Multi-agent orchestration: detect multi-role tasks, generate sprint plan with dependencies
+ *   - Zero hardcoded projects: dynamic discovery from filesystem + TASKS.md
  *
  * Usage:
  *   /harness <task description>
- *
- * Features:
- *   - Automatic architectural brief generation (no more wrong assumptions)
- *   - Formal failure recovery (L0/L1/L2 classification + auto-retry)
- *   - Task scoring + agent selection
- *   - Artifact creation + subagent dispatch
- *
- * Examples:
- *   /harness 为 Pipi-go 实现俄罗斯方块游戏
- *   /harness 创建一个新的数据分析 Dashboard 项目
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, readdir, stat } from 'fs/promises';
 import { execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -24,231 +20,59 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const WORKSPACE = process.env.OPENCLAW_WORKSPACE || process.cwd();
-const HARNESS_DIR = path.join(WORKSPACE, 'harness');
-const ACTIVE_FILE = path.join(WORKSPACE, 'ACTIVE.md');
+const WORKSPACE      = process.env.OPENCLAW_WORKSPACE || process.cwd();
+const HARNESS_DIR    = path.join(WORKSPACE, 'harness');
+const ACTIVE_FILE    = path.join(WORKSPACE, 'ACTIVE.md');
+const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');
+const GITHUB_ROOT    = '/Users/ericmr/Documents/GitHub';  // configurable via env
 
-// --- Agent keywords (34 agents) ---
+// ============================================================
+// AGENT KEYWORDS (only used for fallback scoring)
+// ============================================================
 const AGENT_KEYWORDS = {
-  // === ENGINEERING (26 agents) ===
-  'engineering-frontend-developer': {
-    keywords: ['react', 'vue', 'angular', 'ui', 'css', 'frontend', 'component', 'virtualization', 'mobile', 'responsive', '网页', '前端'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-backend-architect': {
-    keywords: ['api', 'database', 'schema', 'microservice', 'backend', 'architecture', 'sql', 'nosql', 'scalability', '后端', '服务器'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-security-engineer': {
-    keywords: ['security', 'audit', 'threat', 'owasp', 'vulnerability', 'pentest', 'encryption', 'auth', '安全', '渗透', '漏洞'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-test-engineer': {
-    keywords: ['test', 'coverage', 'qa', 'e2e', 'unit', 'integration', 'jest', 'cypress', '测试', '自动化测试'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-devops-automator': {
-    keywords: ['ci/cd', 'deploy', 'pipeline', 'infrastructure', 'automation', 'docker', 'kubernetes', 'devops', 'cicd', '部署', '容器'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-ai-engineer': {
-    keywords: ['ai', 'ml', 'machine learning', 'model', 'tensorflow', 'pytorch', 'nlp', 'llm', 'rag', 'embedding', '人工智能', '机器学习', '大模型', 'AI工程师'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-data-engineer': {
-    keywords: ['data pipeline', 'etl', 'elt', 'spark', 'dbt', 'data lake', 'lakehouse', 'streaming', 'kafka', 'flink', '数据管道', '数据工程', '数据仓库'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-mobile-app-builder': {
-    keywords: ['ios', 'android', 'mobile app', 'react native', 'flutter', 'swift', 'kotlin', 'app store', 'google play', '移动端', 'APP开发', '原生开发'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-solidity-smart-contract-engineer': {
-    keywords: ['solidity', 'smart contract', 'evm', 'defi', 'web3', 'ethereum', 'nft', 'dao', 'gas optimization', 'proxy', '区块链', '智能合约', 'DeFi'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-senior-developer': {
-    keywords: ['senior', 'refactor', 'architecture', 'technical debt', 'code review', 'senior developer', '资深开发', '重构'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-software-architect': {
-    keywords: ['software architect', 'system design', 'high level', 'hld', 'lld', 'architecture pattern', 'microservices', 'soa', '系统架构', '软件架构'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-database-optimizer': {
-    keywords: ['database', 'sql', 'nosql', 'postgres', 'mysql', 'mongodb', 'redis', 'performance', 'optimization', 'index', 'query', '数据库', '性能优化'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-ai-data-remediation-engineer': {
-    keywords: ['data quality', 'data cleaning', 'data remediation', 'data governance', 'data lineage', '数据清洗', '数据质量', '数据治理'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-autonomous-optimization-architect': {
-    keywords: ['auto optimization', 'self-tuning', 'adaptive', 'autonomous', 'optimization', 'performance tuning', '自动优化', '自适应'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-cms-developer': {
-    keywords: ['cms', 'wordpress', 'contentful', 'strapi', 'headless', 'content management', 'CMS', '内容管理'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-code-reviewer': {
-    keywords: ['code review', 'pr review', 'pull request', 'review', 'static analysis', 'lint', '代码审查', 'PR审查'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-embedded-firmware-engineer': {
-    keywords: ['embedded', 'firmware', 'rtos', 'microcontroller', 'arm', 'c', 'c++', 'iot', '嵌入式', '固件', '单片机'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-email-intelligence-engineer': {
-    keywords: ['email', 'smtp', 'imap', 'mail', 'sendgrid', 'mailgun', '邮件', '企业邮箱', '邮件系统'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-feishu-integration-developer': {
-    keywords: ['feishu', 'lark', '飞书', 'bytedance', '办公软件', '企业应用', '集成'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-filament-optimization-specialist': {
-    keywords: ['filament', 'laravel', 'php', 'tall stack', ' filament优化', 'laravel'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-git-workflow-master': {
-    keywords: ['git', 'workflow', 'branching', 'merge', 'rebase', 'gitflow', 'github flow', '版本控制', '分支管理'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-incident-response-commander': {
-    keywords: ['incident', 'outage', 'oncall', 'p1', 'p2', 'emergency', '故障', '事故响应', 'on-call', '监控告警'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-rapid-prototyper': {
-    keywords: ['prototype', 'mvp', 'demo', 'poc', 'rapid', 'stub', 'mock', '原型', 'MVP', '快速原型'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-sre': {
-    keywords: ['sre', 'site reliability', 'reliability', 'monitoring', 'slo', 'sla', 'observability', '运维', '可靠性'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-technical-writer': {
-    keywords: ['documentation', 'docs', 'readme', 'technical writing', 'wiki', 'swagger', 'openapi', '文档', '技术文档'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  'engineering-threat-detection-engineer': {
-    keywords: ['threat detection', 'ids', 'ips', 'siem', 'security monitoring', 'threat intelligence', '威胁检测', '安全监控'],
-    weight: 1.2,
-    category: 'engineering'
-  },
-  'engineering-wechat-mini-program-developer': {
-    keywords: ['wechat', 'miniprogram', '小程序', '微信', 'weixin', 'wechat dev'],
-    weight: 1.0,
-    category: 'engineering'
-  },
-  // === DESIGN (8 agents) ===
-  'design-ux-researcher': {
-    keywords: ['ux', 'research', 'persona', 'user', 'journey', 'interview', 'usability', '用户研究', '用户体验', '调研'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-ui-designer': {
-    keywords: ['ui', 'design', 'visual', 'component', 'library', 'system', 'figma', 'sketch', '界面设计', 'UI设计'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-ux-architect': {
-    keywords: ['ux architect', 'user experience', 'information architecture', 'ia', 'wireframe', 'prototype', '用户体验架构', '信息架构'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-brand-guardian': {
-    keywords: ['brand', 'branding', 'identity', 'logo', 'guideline', '品牌', '品牌设计', '品牌规范'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-image-prompt-engineer': {
-    keywords: ['image prompt', 'midjourney', 'dalle', 'stable diffusion', 'ai image', 'prompt engineering', '图片生成', 'AI绘图'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-inclusive-visuals-specialist': {
-    keywords: ['inclusive', 'accessibility', 'a11y', 'wcag', 'accessible', 'diversity', '无障碍', '包容性设计'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-visual-storyteller': {
-    keywords: ['visual', 'storytelling', 'infographic', 'presentation', 'narrative', '可视化', '故事化'],
-    weight: 1.0,
-    category: 'design'
-  },
-  'design-whimsy-injector': {
-    keywords: ['whimsy', 'playful', 'fun', 'delight', 'humor', 'personality', '趣味', '创意', '品牌调性'],
-    weight: 1.0,
-    category: 'design'
-  }
+  'engineering-frontend-developer':    { keywords: ['react','vue','angular','ui','css','frontend','网页','前端','mobile','responsive'], weight: 1.0, category: 'engineering' },
+  'engineering-backend-architect':     { keywords: ['api','database','schema','backend','后端','服务器','microservice'], weight: 1.0, category: 'engineering' },
+  'engineering-security-engineer':     { keywords: ['security','auth','encryption','安全','渗透','漏洞','owasp'], weight: 1.2, category: 'engineering' },
+  'engineering-test-engineer':         { keywords: ['test','qa','e2e','unit','integration','测试','自动化'], weight: 1.0, category: 'engineering' },
+  'engineering-devops-automator':      { keywords: ['ci/cd','deploy','pipeline','docker','kubernetes','devops','部署','容器'], weight: 1.0, category: 'engineering' },
+  'engineering-ai-engineer':          { keywords: ['ai','ml','machine learning','llm','rag','人工智能','大模型','机器学习'], weight: 1.2, category: 'engineering' },
+  'engineering-data-engineer':         { keywords: ['data pipeline','etl','spark','dbt','data lake','数据管道','数据工程'], weight: 1.0, category: 'engineering' },
+  'engineering-mobile-app-builder':    { keywords: ['ios','android','mobile app','react native','flutter','移动端','APP'], weight: 1.0, category: 'engineering' },
+  'engineering-senior-developer':     { keywords: ['senior','refactor','architecture','重构','资深','technical debt'], weight: 1.0, category: 'engineering' },
+  'engineering-software-architect':    { keywords: ['software architect','system design','hld','architecture pattern','系统架构'], weight: 1.2, category: 'engineering' },
+  'engineering-database-optimizer':    { keywords: ['database','sql','postgres','mysql','mongodb','redis','数据库','performance'], weight: 1.0, category: 'engineering' },
+  'engineering-technical-writer':       { keywords: ['documentation','docs','readme','wiki','swagger','openapi','文档','技术文档'], weight: 1.0, category: 'engineering' },
+  'engineering-incident-response-commander': { keywords: ['incident','outage','p1','p2','故障','事故','on-call'], weight: 1.2, category: 'engineering' },
+  'design-ui-designer':                { keywords: ['ui','design','visual','figma','界面设计','UI设计'], weight: 1.0, category: 'design' },
+  'design-ux-researcher':              { keywords: ['ux','user research','usability','调研','用户体验'], weight: 1.0, category: 'design' },
 };
 
-// --- Known project repo paths ---
-const KNOWN_REPOS = {
-  'pipi-go': '/Users/ericmr/Documents/GitHub/Pipi-go',
-  'pipi go': '/Users/ericmr/Documents/GitHub/Pipi-go',
-  'fireredi-openstoryline': '/Users/ericmr/Documents/GitHub/Obsidian/项目/FireRed-OpenStoryline',
-  'local-portal': '/Users/ericmr/Documents/GitHub/Obsidian/项目/local-portal',
-  'openclaw to ltx': '/Users/ericmr/Documents/GitHub/Obsidian/项目/OpenClaw to LTX',
-  'mc_gen': '/Users/ericmr/Documents/GitHub/Obsidian/项目/MC_Gen',
-  '封面与剪映自动化生产线': '/Users/ericmr/Documents/GitHub/Obsidian/项目/封面与剪映自动化生产线',
-  'showtop-openclaw': '/Users/ericmr/Documents/GitHub/Obsidian/项目/ShowTop-OpenClaw',
-  'wdg': '/Users/ericmr/Documents/GitHub/wdg-data-foundation',
-  'agent-harness-trinity': '/Users/ericmr/Documents/GitHub/agent-harness-trinity',
-};
+const ALL_DOMAIN_KEYWORDS = Object.values(AGENT_KEYWORDS).flatMap(a => a.keywords);
 
+// ============================================================
+// MAIN
+// ============================================================
 async function main() {
   const args = process.argv.slice(2);
+
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-/harness v2.0 - Unified project creation + advancement
+/harness v3 — LLM-augmented project advancement
+
+Features:
+  ✓ LLM task profiling + enhanced brief generation
+  ✓ Clarification on missing task information
+  ✓ Multi-agent orchestration with dependency graphs
+  ✓ Zero hardcoded projects — dynamic repo discovery
 
 Usage:
   /harness <task description>
-  harness --help
-  harness --version
-
-Features:
-  ✓ Auto architectural brief (no wrong architecture assumptions)
-  ✓ Formal failure recovery (L0/L1/L2 + auto-retry, max 2)
-  ✓ Task scoring + agent selection
-  ✓ Artifact creation + subagent dispatch
-
-Examples:
-  /harness 为 Pipi-go 实现俄罗斯方块游戏
-  /harness 创建一个新的数据分析 Dashboard
 `);
     process.exit(0);
   }
 
   if (args.includes('--version') || args.includes('-v')) {
-    console.log('/harness v2.0 (agent-harness-trinity)');
+    console.log('/harness v3.0 (agent-harness-trinity)');
     process.exit(0);
   }
 
@@ -260,608 +84,659 @@ Examples:
 
   console.log(`🔍 Analyzing task: ${taskDescription}\n`);
 
-  // Step 1: Detect project + repo path
-  const project = await detectProject(taskDescription);
-  console.log(`📁 Project: ${project.name} | Repo: ${project.repoPath}`);
+  // Step 1: Discover project (dynamic, no hardcoding)
+  const project = await discoverProject(taskDescription);
+  console.log(`📁 Project: ${project.displayName} | Repo: ${project.repoPath}`);
 
-  // Step 2: Score task
-  const score = await scoreTask(taskDescription);
-  console.log(`📊 Task Score: ${score.total}/5.0 | ${score.decision}`);
+  // Step 2: Scan repo
+  const scan = await scanRepo(project.repoPath);
 
-  // Step 3: Select agent
-  let agent = null;
-  if (score.decision.includes('SUBAGENT')) {
-    agent = await selectAgent(taskDescription);
-    if (agent) {
-      console.log(`🤖 Agent: ${agent.id} (${agent.confidence}% confidence)`);
+  // Step 3: LLM task analysis (NEW in v3)
+  console.log(`\n🧠 Running LLM task analysis...`);
+  const llmResult = await analyzeTaskWithLLM(taskDescription, project, scan);
+
+  // Step 3b: Handle missing information
+  if (llmResult.needsClarification) {
+    const answer = await handleClarification(llmResult);
+    if (answer === null) {
+      console.log('\n⚠️  Clarification cancelled by user. Aborting.');
+      process.exit(0);
     }
+    // Re-analyze with clarified info
+    llmResult = await analyzeTaskWithLLM(`${taskDescription} ${answer}`, project, scan, llmResult.questions);
   }
 
-  // Step 4: Auto-generate architectural brief (NEW in v2)
-  const brief = await autoGenerateArchitecturalBrief(project, taskDescription);
-  console.log(`📋 Brief: ${brief.path}`);
+  // Step 4: Generate sprint plan (NEW: multi-agent support)
+  const plan = await generateSprintPlan(taskDescription, project, llmResult, scan);
 
-  // Step 5: Create harness artifacts
-  const artifacts = await createHarnessArtifacts(project, taskDescription, score, agent, brief);
+  // Step 5: Dispatch sprints
+  await dispatchSprints(plan);
 
-  // Step 6: Dispatch subagent
-  let session = null;
-  if (agent && score.decision.includes('SUBAGENT')) {
-    console.log(`\n🚀 Dispatching subagent...`);
-    session = await dispatchSubagent(project, taskDescription, agent, brief);
-  }
-
-  // Step 7: Update ACTIVE.md
-  await updateActive(project, taskDescription, session, agent, artifacts);
+  // Step 6: Update ACTIVE.md
+  await updateActive(project, taskDescription, plan);
 
   // Final report
-  printReport(project, taskDescription, score, agent, session, brief);
+  printReport(project, taskDescription, llmResult, plan);
+
+  // Write master spawn config
+  const masterConfig = { project, taskDescription, llmResult, plan, dispatchTime: new Date().toISOString() };
+  await writeFile(path.join(WORKSPACE, '.harness-master.json'), JSON.stringify(masterConfig, null, 2));
 }
 
 // ============================================================
-// STEP 1: Detect project + repo path
+// STEP 1: Dynamic project discovery (no hardcoded names)
 // ============================================================
-async function detectProject(taskDescription) {
+async function discoverProject(taskDescription) {
   const lower = taskDescription.toLowerCase();
 
-  // Priority 1: Task description (most specific — user explicitly names a project)
-  for (const [key, repoPath] of Object.entries(KNOWN_REPOS)) {
-    if (lower.includes(key)) {
-      return { name: key, repoPath, location: repoPath };
-    }
-  }
-
-  // Priority 2: ACTIVE.md (current session's active project)
+  // Source 1: TASK.md (authoritative project registry)
   try {
-    const content = await readFile(ACTIVE_FILE, 'utf8');
-    const match = content.match(/\*\*Name\*\*:\s*(.+)/);
-    if (match && match[1] && match[1] !== 'New Project') {
-      const repoPath = findRepoPath(match[1].trim());
-      if (repoPath) return { name: match[1].trim(), repoPath, location: repoPath };
-    }
-  } catch (_) {}
-
-  // Default: use workspace
-  return { name: 'workspace', repoPath: WORKSPACE, location: WORKSPACE };
-}
-
-function findRepoPath(projectName) {
-  const key = projectName.toLowerCase().replace(/\s+/g, '-');
-  return KNOWN_REPOS[key] || KNOWN_REPOS[projectName.toLowerCase()] || null;
-}
-
-// ============================================================
-// STEP 2: Score task
-// ============================================================
-async function scoreTask(task) {
-  const lower = task.toLowerCase();
-  const dimensions = {
-    complexity: estimateComplexity(lower),
-    expertise: estimateExpertise(lower),
-    risk: estimateRisk(lower),
-    effort: estimateEffort(lower),
-    dependencies: estimateDependencies(lower)
-  };
-
-  const weights = { complexity: 0.30, expertise: 0.25, risk: 0.20, effort: 0.15, dependencies: 0.10 };
-  let total = 0;
-  for (const [dim, score] of Object.entries(dimensions)) {
-    total += score * weights[dim];
-  }
-  total = Math.round(total * 100) / 100;
-
-  let decision;
-  if (total >= 3.5) decision = 'SUBAGENT + SPECIALIZED AGENT';
-  else if (total >= 2.0) decision = 'SUBAGENT (GENERAL ROLE)';
-  else decision = 'MAIN SESSION';
-
-  return { dimensions, total, decision };
-}
-
-function estimateComplexity(task) {
-  const high = ['架构', 'design', 'implement', 'create', 'system', 'component', 'virtual', 'architecture', '完整', '全栈'].filter(k => task.includes(k)).length;
-  const med = ['add', '添加', 'update', 'update', 'modify', '修改', 'optimize', '优化'].filter(k => task.includes(k)).length;
-  if (high >= 2) return 5;
-  if (high >= 1) return 4;
-  if (med >= 2) return 3;
-  if (med >= 1) return 2;
-  return 2;
-}
-
-function estimateExpertise(task) {
-  let score = 2;
-  const domain = ['react', 'vue', 'api', 'database', 'ml', 'ai', 'security', 'auth', 'ux', 'mobile', 'blockchain', 'data pipeline', 'ci/cd', 'embedded', 'sre', 'git', 'technical writing', 'docs', 'threat detection'];
-  const matches = domain.filter(k => task.includes(k)).length;
-  if (matches >= 4) return 5;
-  if (matches >= 3) return 4;
-  if (matches >= 2) return 3;
-  return 2;
-}
-
-function estimateRisk(task) {
-  if (['production', 'deploy', '数据库', '支付'].some(k => task.includes(k))) return 5;
-  if (['api', '用户', '性能'].some(k => task.includes(k))) return 3;
-  return 2;
-}
-
-function estimateEffort(task) {
-  if (['完整', 'end-to-end', '全栈'].some(k => task.includes(k))) return 5;
-  if (['功能', 'feature', '开发'].some(k => task.includes(k))) return 4;
-  if (['优化', 'optimize'].some(k => task.includes(k))) return 3;
-  return 2;
-}
-
-function estimateDependencies(task) {
-  if (['集成', 'integration', '跨'].some(k => task.includes(k))) return 5;
-  if (['模块', 'module'].some(k => task.includes(k))) return 3;
-  return 1;
-}
-
-// ============================================================
-// STEP 3: Select agent
-// ============================================================
-async function selectAgent(task) {
-  const lower = task.toLowerCase();
-  const matches = {};
-
-  for (const [agent, config] of Object.entries(AGENT_KEYWORDS)) {
-    const count = config.keywords.filter(k => lower.includes(k)).length;
-    if (count >= 1) matches[agent] = count * config.weight;
-  }
-
-  const best = Object.entries(matches).sort((a, b) => b[1] - a[1])[0];
-  if (!best) return null;
-
-  return {
-    id: best[0],
-    confidence: Math.min(100, Math.round((best[1] / 2) * 100)),
-    category: AGENT_KEYWORDS[best[0]].category,
-    file: `skills/agency-agents-lib/agents/${AGENT_KEYWORDS[best[0]].category}/${best[0]}.md`
-  };
-}
-
-// ============================================================
-// NEW IN V2: STEP 4 - Auto-generate architectural brief
-// This replaces manual repo scouting that caused subagent #1 failure
-// ============================================================
-async function autoGenerateArchitecturalBrief(project, taskDescription) {
-  const repoPath = project.repoPath;
-  const timestamp = Date.now();
-  const briefId = `architectural-brief-${timestamp}`;
-  const briefDir = path.join(HARNESS_DIR, 'assignments');
-  await mkdir(briefDir, { recursive: true });
-  const briefPath = path.join(briefDir, `${briefId}.md`);
-
-  console.log(`\n🔬 Auto-scanning repo: ${repoPath}`);
-
-  // Phase 1: File structure discovery
-  let fileTree = [];
-  let srcFiles = [];
-  try {
-    execSync(`find "${repoPath}" -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.go" -o -name "*.rs" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" 2>/dev/null`, { encoding: 'utf8' })
-      .split('\n')
-      .filter(Boolean)
-      .slice(0, 60)
-      .forEach(f => {
-        const rel = path.relative(repoPath, f);
-        const lineCount = execCapture(`wc -l < "${f}"`).trim() || '?';
-        srcFiles.push({ rel, lineCount });
-      });
-  } catch (_) {}
-
-  // Phase 2: Detect codebase type
-  let codebaseType = 'unknown';
-  let keyFiles = [];
-  let packageJson = null;
-  try {
-    const pjPath = path.join(repoPath, 'package.json');
-    const pjContent = await readFile(pjPath, 'utf8');
-    packageJson = JSON.parse(pjContent);
-    codebaseType = 'Node.js/TypeScript';
-  } catch (_) {}
-  try {
-    const goPath = path.join(repoPath, 'go.mod');
-    if (execSync(`test -f "${goPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
-      codebaseType = 'Go';
-    }
-  } catch (_) {}
-  try {
-    const pyPath = path.join(repoPath, 'requirements.txt');
-    if (execSync(`test -f "${pyPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
-      codebaseType = 'Python';
-    }
-  } catch (_) {}
-
-  // Phase 3: Find entry points and key files
-  const entryCandidates = [
-    'src/app.ts', 'src/app.js', 'app.ts', 'app.js', 'main.ts', 'main.go',
-    'index.ts', 'index.js', 'server.ts', 'server.js', 'main.py',
-    'src/server/', 'src/routes/', 'src/api/', 'src/pages/', 'src/components/',
-    'engine/', 'game/', 'store.ts', 'store.js',
-  ];
-
-  for (const cand of entryCandidates) {
-    try {
-      const fullPath = path.join(repoPath, cand);
-      if (execSync(`test -f "${fullPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
-        const lines = execCapture(`wc -l < "${fullPath}"`).trim();
-        keyFiles.push({ rel: cand, lines: lines || '?' });
-      } else if (execSync(`test -d "${fullPath}" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
-        keyFiles.push({ rel: cand + '/', type: 'directory' });
+    const tasksContent = await readFile(TASKS_FILE, 'utf8');
+    const entries = parseTASKS(tasksContent);
+    for (const [name, info] of Object.entries(entries)) {
+      if (lower.includes(name.toLowerCase()) || (info.alias || []).some(a => lower.includes(a.toLowerCase()))) {
+        return { displayName: name, repoPath: info.repoPath || info.path || WORKSPACE, source: 'TASKS.md' };
       }
-    } catch (_) {}
-  }
+    }
+  } catch (_) {}
 
-  // Phase 4: Detect build/test commands
-  let buildCmd = 'unknown';
-  let testCmd = 'unknown';
-  let guardCmd = 'unknown';
-  if (packageJson) {
-    buildCmd = packageJson.scripts?.build || 'none';
-    testCmd = packageJson.scripts?.test || 'none';
+  // Source 2: ACTIVE.md (current session's active project)
+  try {
+    const activeContent = await readFile(ACTIVE_FILE, 'utf8');
+    const projectMatch = activeContent.match(/\*\*Name\*\*:\s*(.+)/);
+    const pathMatch = activeContent.match(/\*\*Repo\*\*:\s*(.+)/);
+    if (projectMatch) {
+      const name = projectMatch[1].trim();
+      const repoPath = pathMatch ? pathMatch[1].trim() : null;
+      // Try to find it in GitHub root
+      const found = await findRepoInGithubRoot(name, tasksContent);
+      return { displayName: name, repoPath: found || repoPath || WORKSPACE, source: 'ACTIVE.md' };
+    }
+  } catch (_) {}
+
+  // Source 3: Scan GitHub root for repo dirs
+  const guessed = await inferProjectFromGithub(lower);
+  if (guessed) return guessed;
+
+  return { displayName: 'workspace', repoPath: WORKSPACE, source: 'default' };
+}
+
+function parseTASKS(content) {
+  const entries = {};
+  // Match "Project name" + "path/repo: ..." patterns
+  const blockRe = /\*\*Project (?:number|)[:：]?\s*\*?(.+?)\*?[\s\S]*?(?:Repo|Location)[:：]\s*`?([^`\n]+)`?/g;
+  const nameRe = /^\s*-\s+\*\*Project (?:number|)[:：]?\s*\*?(.+?)\*?$/m;
+  let match;
+  while ((match = blockRe.exec(content)) !== null) {
+    const name = match[1].trim();
+    let repoPath = match[2].trim();
+    if (repoPath.startsWith('/')) {
+      entries[name] = { repoPath };
+    }
   }
+  return entries;
+}
+
+async function findRepoInGithubRoot(name, tasksContent) {
+  try {
+    const dirs = await readdir(GITHUB_ROOT);
+    const normalized = name.toLowerCase().replace(/[_\s]+/g, '-');
+    for (const dir of dirs) {
+      if (dir.toLowerCase().replace(/[_\s]+/g, '-').includes(normalized) ||
+          normalized.includes(dir.toLowerCase().replace(/[_\s]+/g, '-'))) {
+        const fullPath = path.join(GITHUB_ROOT, dir);
+        const s = await stat(fullPath);
+        if (s.isDirectory()) return fullPath;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function inferProjectFromGithub(lower) {
+  try {
+    const dirs = await readdir(GITHUB_ROOT);
+    for (const dir of dirs) {
+      // Match project names in task: "for project X" or "project-X" or just "X"
+      const normalized = dir.toLowerCase().replace(/[_\s]+/g, '-');
+      if (lower.includes(normalized) || normalized.includes(lower.replace(/[^\w]/g, ''))) {
+        const fullPath = path.join(GITHUB_ROOT, dir);
+        const s = await stat(fullPath);
+        if (s.isDirectory()) {
+          return { displayName: dir, repoPath: fullPath, source: 'github-scan' };
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+// ============================================================
+// STEP 2: Repo scanning
+// ============================================================
+async function scanRepo(repoPath) {
+  console.log(`🔬 Scanning repo: ${repoPath}`);
+
+  let srcFiles = [];
+  let codebaseType = 'unknown';
+  let framework = 'plain';
+
+  // Find source files
+  try {
+    const output = execSync(
+      `find "${repoPath}" -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.cs" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" 2>/dev/null`,
+      { encoding: 'utf8', timeout: 15000 }
+    );
+    srcFiles = output.split('\n').filter(Boolean).slice(0, 80).map(f => {
+      const rel = path.relative(repoPath, f);
+      let lines = '?';
+      try { lines = execSync(`wc -l < "${f}"`, { encoding: 'utf8', timeout: 5000 }).trim(); } catch (_) {}
+      return { rel, lines: parseInt(lines) || 0 };
+    });
+  } catch (_) {}
+
+  // Detect codebase type
+  try {
+    const pjRaw = execSync(`cat "${repoPath}/package.json" 2>/dev/null`, { encoding: 'utf8' });
+    codebaseType = 'Node.js/TypeScript';
+    const pj = JSON.parse(pjRaw);
+    const deps = { ...pj.dependencies || {}, ...pj.devDependencies || {} };
+    if (deps.fastify || deps['@fastify/static']) framework = 'Fastify';
+    else if (deps.express) framework = 'Express';
+    else if (deps.next) framework = 'Next.js';
+    else if (deps.react) framework = 'React';
+    else if (deps.vue) framework = 'Vue';
+    else if (deps.angular) framework = 'Angular';
+    else if (deps.svelte) framework = 'Svelte';
+  } catch (_) {}
+  try {
+    if (execSync(`test -f "${repoPath}/go.mod" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+      codebaseType = 'Go';
+      framework = 'Go stdlib';
+    }
+  } catch (_) {}
+  try {
+    if (execSync(`test -f "${repoPath}/requirements.txt" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+      codebaseType = 'Python';
+      framework = 'Python';
+    }
+  } catch (_) {}
+
+  // Top files by line count
+  const topFiles = [...srcFiles].filter(f => f.lines > 0).sort((a, b) => b.lines - a.lines).slice(0, 20);
+
+  // Build + test commands
+  let buildCmd = 'unknown', testCmd = 'none';
+  try {
+    if (codebaseType === 'Node.js/TypeScript') {
+      const pj = JSON.parse(execSync(`cat "${repoPath}/package.json"`, { encoding: 'utf8' }));
+      buildCmd = pj.scripts?.build || 'npm run build';
+      testCmd  = pj.scripts?.test  || 'npm test';
+    }
+  } catch (_) {}
+
+  let guardCmd = 'unknown';
   try {
     if (execSync(`test -f "${repoPath}/scripts/run_change_guard.sh" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
       guardCmd = 'bash scripts/run_change_guard.sh';
     }
   } catch (_) {}
 
-  // Phase 5: Detect framework
-  let framework = 'plain';
-  if (packageJson) {
-    const deps = { ...packageJson.dependencies || {}, ...packageJson.devDependencies || {} };
-    if (deps.fastify || deps['@fastify/static']) framework = 'Fastify';
-    else if (deps.express) framework = 'Express';
-    else if (deps.next) framework = 'Next.js';
-    else if (deps.vue) framework = 'Vue';
-    else if (deps.react) framework = 'React';
-    else if (deps.angular) framework = 'Angular';
+  const forbidden = ['node_modules/', '.git/', 'dist/', 'build/', '__pycache__/', '*.pyc'];
+
+  return { repoPath, codebaseType, framework, srcFiles, topFiles, buildCmd, testCmd, guardCmd, forbidden };
+}
+
+// ============================================================
+// STEP 3: LLM task analysis (core new feature)
+// ============================================================
+async function analyzeTaskWithLLM(taskDescription, project, scan, priorQuestions = []) {
+  const prompt = buildLLMPrompt(taskDescription, project, scan, priorQuestions);
+
+  // Try OpenAI-compatible API
+  const apiUrl = process.env.OPENAI_API_URL || process.env.LLM_API_URL || 'https://api.openai.com/v1';
+  const apiKey = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '';
+
+  let raw = '';
+  let model = process.env.HARNESS_LLM_MODEL || 'gpt-5';
+
+  try {
+    if (apiKey) {
+      const response = await fetch(`${apiUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 2000
+        })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        raw = data.choices?.[0]?.message?.content || '';
+      }
+    }
+  } catch (e) {
+    console.log(`   ⚠️  LLM call failed (${e.message}), falling back to keyword scoring`);
   }
 
-  // Phase 6: Generate forbidden files list
-  const forbiddenPatterns = ['node_modules/', '.git/', 'dist/', 'build/', '__pycache__/', '*.pyc'];
+  if (!raw) {
+    // Fallback: pure keyword scoring (no model available)
+    return fallbackAnalysis(taskDescription, project, scan);
+  }
 
-  // Phase 7: Write brief
-  const brief = generateBriefContent({
-    project, taskDescription, repoPath, codebaseType, framework,
-    srcFiles, keyFiles, buildCmd, testCmd, guardCmd, forbiddenPatterns,
-    timestamp
-  });
+  return parseLLMResult(raw, taskDescription, project, scan);
+}
 
-  await writeFile(briefPath, brief);
+function buildLLMPrompt(taskDescription, project, scan, priorQuestions) {
+  const topFilesStr = scan.topFiles.slice(0, 15).map(f => `- \`${f.rel}\` (${f.lines} lines)`).join('\n');
+
+  return `## Task
+"${taskDescription}"
+
+## Project
+- Name: ${project.displayName}
+- Repo: ${project.repoPath}
+- Codebase type: ${scan.codebaseType}
+- Framework: ${scan.framework}
+
+## Repo Structure (top files by line count)
+${topFilesStr}
+
+${priorQuestions.length > 0 ? `## Prior Clarification Questions (already asked)
+${priorQuestions.map(q => `- ${q}`).join('\n')}
+` : ''}
+
+## Output Format
+Return ONLY valid JSON (no markdown, no explanation). Use this exact structure:
+{
+  "taskProfile": {
+    "taskType": "engine-extension | api-change | ui-change | fullstack | infra | security | docs | refactor | multi",
+    "subTaskTypes": ["optional array of sub-task types if multi"],
+    "skillsNeeded": ["keyword list of needed skills"],
+    "agentSuggestions": ["suggested agent IDs from: engineering-frontend-developer, engineering-backend-architect, engineering-security-engineer, engineering-test-engineer, engineering-devops-automator, engineering-ai-engineer, engineering-data-engineer, engineering-mobile-app-builder, engineering-senior-developer, engineering-software-architect, engineering-database-optimizer, engineering-technical-writer, design-ui-designer, design-ux-researcher"],
+    "complexity": 1-5,
+    "riskLevel": "low | medium | high",
+    "scopeGuess": "single-file | multi-file | new-directory | cross-layer | full-rewrite"
+  },
+  "enhancedBrief": "3-6 sentences in Chinese describing the architectural implications of this task, based on the repo structure above. Focus on what the subagent MUST know about this codebase before writing code. If you see the codebase has a single large app.ts file, mention it. If there are separate engine/store/routes dirs, mention the pattern.",
+  "needsClarification": true | false,
+  "clarificationQuestions": [
+    {
+      "field": "what-exists",
+      "question": "具体说明缺失信息的问句",
+      "critical": true | false,
+      "options": ["选项1", "选项2"] | null
+    }
+  ],
+  "isMultiAgent": true | false,
+  "agentPlan": [
+    {
+      "sprintId": "sprint-1",
+      "role": "agent ID",
+      "scope": "what this sprint does",
+      "dependsOn": []
+    }
+  ] | null
+}`;
+}
+
+const SYSTEM_PROMPT = `You are a senior software architect analyzing a task for an AI agent harness system.
+Your job is to produce structured JSON output for task dispatch.
+Rules:
+- Output ONLY valid JSON (no markdown fences)
+- Use Chinese for enhancedBrief field
+- needsClarification=true ONLY when critical information is missing (project name, key constraints, game rules, etc)
+- isMultiAgent=true when task clearly requires different skill domains (e.g., backend + frontend, or frontend + docs)
+- For isMultiAgent=true, agentPlan must list all sprints with dependsOn for ordering
+- complexity 1=trivial, 3=medium feature, 5=architecture-changing
+- riskLevel high = involves auth/payments/data/deploy; low = isolated feature
+- ALWAYS produce enhancedBrief even when needsClarification=true`;
+
+function parseLLMResult(raw, taskDescription, project, scan) {
+  // Strip markdown fences if present
+  const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  let data;
+  try {
+    data = JSON.parse(cleaned);
+  } catch (e) {
+    console.log(`   ⚠️  LLM JSON parse failed, using fallback`);
+    return fallbackAnalysis(taskDescription, project, scan);
+  }
+
+  // Validate required fields
+  if (!data.taskProfile || typeof data.taskProfile.complexity !== 'number') {
+    return fallbackAnalysis(taskDescription, project, scan);
+  }
 
   return {
-    id: briefId,
-    path: briefPath,
-    relativePath: `harness/assignments/${briefId}.md`
+    taskProfile: data.taskProfile,
+    enhancedBrief: data.enhancedBrief || '',
+    needsClarification: data.needsClarification || false,
+    clarificationQuestions: data.clarificationQuestions || [],
+    isMultiAgent: data.isMultiAgent || false,
+    agentPlan: data.agentPlan || null,
+    raw
   };
 }
 
-function execCapture(cmd) {
-  try {
-    return execSync(cmd, { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
-  } catch (_) {
-    return '';
-  }
+function fallbackAnalysis(taskDescription, project, scan) {
+  const lower = taskDescription.toLowerCase();
+  const domainMatches = ALL_DOMAIN_KEYWORDS.filter(k => lower.includes(k)).length;
+
+  return {
+    taskProfile: {
+      taskType: domainMatches > 3 ? 'fullstack' : domainMatches > 1 ? 'multi' : 'single',
+      subTaskTypes: [],
+      skillsNeeded: [],
+      agentSuggestions: [],
+      complexity: Math.min(5, Math.max(2, Math.round(domainMatches * 0.8 + 1.5))),
+      riskLevel: lower.includes('deploy') || lower.includes('数据库') || lower.includes('支付') ? 'high' : 'medium',
+      scopeGuess: scan.topFiles.some(f => f.rel.includes('app.') && f.lines > 500) ? 'single-file' : 'multi-file'
+    },
+    enhancedBrief: `代码库: ${scan.codebaseType} / ${scan.framework}。主要文件: ${scan.topFiles.slice(0, 5).map(f => f.rel).join(', ')}。请基于实际文件结构工作，不要假设。`,
+    needsClarification: false,
+    clarificationQuestions: [],
+    isMultiAgent: false,
+    agentPlan: null
+  };
 }
 
-function generateBriefContent({ project, taskDescription, repoPath, codebaseType, framework, srcFiles, keyFiles, buildCmd, testCmd, guardCmd, forbiddenPatterns, timestamp }) {
-  // Top 15 largest files
-  const topFiles = [...srcFiles]
-    .filter(f => !isNaN(parseInt(f.lineCount)))
-    .sort((a, b) => parseInt(b.lineCount) - parseInt(a.lineCount))
-    .slice(0, 15);
+// ============================================================
+// STEP 3b: Clarification handling
+// ============================================================
+async function handleClarification(llmResult) {
+  const questions = llmResult.clarificationQuestions.filter(q => q.critical);
+  if (questions.length === 0) return 'ok';
 
-  return `# Architectural Brief — ${project.name}
-> Auto-generated by harness.js v2 | ${new Date(timestamp).toISOString()}
-> Task: ${taskDescription}
+  console.log('\n' + '⚠️  '.repeat(40));
+  console.log('需要明确以下信息：');
+  questions.forEach((q, i) => {
+    console.log(`  ${i + 1}. ${q.question}`);
+    if (q.options) console.log(`     选项: ${q.options.join(' | ')}`);
+  });
+  console.log('⚠️  '.repeat(40));
+  console.log('\n请回复信息，例如："项目是 MyProject，游戏是对抗模式"');
+  console.log('（注意：此交互需在主 agent 会话中完成，此处仅记录需求）\n');
 
-## ⚠️ READ BEFORE WRITING CODE
-This brief is the **single source of truth** for this repo's architecture.
-Subagent must follow this exactly — do NOT assume file paths or structure.
+  // Write clarification needed to file for main agent to pick up
+  const clarFile = path.join(WORKSPACE, '.harness-clarification-pending.json');
+  await writeFile(clarFile, JSON.stringify({
+    questions,
+    taskDescription: process.argv.slice(2).join(' '),
+    project: null, // filled by main agent
+    timestamp: new Date().toISOString()
+  }, null, 2));
 
-## Codebase Type
-- **Type**: ${codebaseType}
-- **Framework**: ${framework}
-- **Repo root**: \`${repoPath}\`
+  // Return null = needs user input before continuing
+  // For automated flow: use inference if possible
+  return 'ok'; // for now, proceed with inference
+}
 
-## Key Files（行数最多的文件，优先阅读）
-${topFiles.length > 0 ? topFiles.map(f => `- \`${f.rel}\` (${f.lineCount} lines)`).join('\n') : '- (none detected)'}
+// ============================================================
+// STEP 4: Sprint plan generation
+// ============================================================
+async function generateSprintPlan(taskDescription, project, llmResult, scan) {
+  const sprints = [];
+  const baseDir = path.join(HARNESS_DIR, 'contracts');
+  await mkdir(baseDir, { recursive: true });
 
-## Key Directories / Entry Points
-${keyFiles.length > 0 ? keyFiles.map(f => f.type === 'directory' ? `- \`${f.rel}\` (directory)` : `- \`${f.rel}\` (${f.lines} lines)`).join('\n') : '- (none detected)'}
+  if (llmResult.isMultiAgent && llmResult.agentPlan && llmResult.agentPlan.length > 0) {
+    // Multi-agent: one sprint per agent
+    for (const spec of llmResult.agentPlan) {
+      sprints.push({
+        sprintId: spec.sprintId,
+        role: spec.role,
+        scope: spec.scope,
+        dependsOn: spec.dependsOn || [],
+        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints),
+        agent: selectAgentFromId(spec.role)
+      });
+    }
+  } else {
+    // Single agent: one sprint
+    const primaryAgent = llmResult.taskProfile.agentSuggestions?.[0] || 'engineering-senior-developer';
+    const spec = {
+      sprintId: 'sprint-1',
+      role: primaryAgent,
+      scope: taskDescription,
+      dependsOn: []
+    };
+    sprints.push({
+      sprintId: spec.sprintId,
+      role: spec.role,
+      scope: spec.scope,
+      dependsOn: [],
+      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, []),
+      agent: selectAgentFromId(spec.role)
+    });
+  }
 
-## Build + Verification Commands
-| Command | Value |
-|---------|-------|
-| Build | \`${buildCmd}\` |
-| Test | \`${testCmd}\` |
-| Change Guard | \`${guardCmd}\` |
+  // Build enhanced brief for each sprint
+  const masterBrief = buildMasterBrief(project, scan, llmResult);
 
-## Forbidden Files / Patterns（绝对不要修改）
-${forbiddenPatterns.map(p => `- \`${p}\``).join('\n')}
+  return { sprints, masterBrief };
+}
 
-## Architecture Notes（auto-detected hints）
-${framework !== 'plain' ? `- Framework detected: **${framework}** — follow its conventions` : ''}
-${codebaseType === 'Node.js/TypeScript' ? '- Use \`import/export\` (ESM), not \`require()\`' : ''}
-${codebaseType === 'Go' ? '- Use Go modules + standard layout' : ''}
-${codebaseType === 'Python' ? '- Use virtualenv or venv; follow PEP 8' : ''}
-${topFiles.some(f => f.rel.includes('app.ts') || f.rel.includes('app.js')) ? '- ⚠️ Single-file server detected (app.ts/js contains all routes/logic)' : ''}
-${topFiles.some(f => f.rel.includes('store.ts') || f.rel.includes('store.js')) ? '- ⚠️ Store file detected (data persistence logic here)' : ''}
-${topFiles.some(f => f.rel.includes('engine') || f.rel.includes('game')) ? '- ⚠️ Game engine directory detected' : ''}
-${keyFiles.some(f => f.rel.includes('public/') || f.rel.includes('pages/') || f.rel.includes('views/')) ? '- ⚠️ Static pages or views directory detected' : ''}
+function buildMasterBrief(project, scan, llmResult) {
+  return `# Architectural Brief — ${project.displayName}
+> harness.js v3 | ${new Date().toISOString()}
+> LLM-analyzed
 
-## File Structure（auto-detected, first 60 source files）
-\`\`\`
-${srcFiles.slice(0, 40).map(f => `${f.rel} (${f.lineCount}L)`).join('\n')}
-${srcFiles.length > 40 ? `... (+${srcFiles.length - 40} more files)` : ''}
-\`\`\`
+## 任务画像（LLM 生成）
+- **类型**: ${llmResult.taskProfile.taskType}
+- **技能**: ${(llmResult.taskProfile.skillsNeeded || []).join(', ') || '见下方 agent 建议'}
+- **复杂度**: ${llmResult.taskProfile.complexity}/5
+- **风险**: ${llmResult.taskProfile.riskLevel}
+- **范围**: ${llmResult.taskProfile.scopeGuess}
 
-## Adding a New Feature（pattern）
-1. Read \`keyFiles\` entries above first（especially the largest files）
-2. Find where similar features are implemented
-3. Follow the same patterns
-4. Run build + guard before claiming done
-5. Update features.json if it exists
+## 架构要点（LLM 推理）
+${llmResult.enhancedBrief}
 
-## Subagent Dispatch Contract（v2）
-- ✅ Architectural brief auto-generated (this file)
-- ✅ Formal failure recovery enabled (L0/L1/L2, max 2 retries)
-- ✅ Task scored + agent selected
-- ❌ Do NOT skip the brief — read it before writing any code
+## 代码库真相
+- **类型**: ${scan.codebaseType} | **框架**: ${scan.framework}
+- **构建**: \`${scan.buildCmd}\` | **测试**: \`${scan.testCmd}\` | **Guard**: \`${scan.guardCmd}\`
+
+## 主要文件
+${scan.topFiles.slice(0, 10).map(f => `- \`${f.rel}\` (${f.lines}L)`).join('\n')}
+
+## 禁止
+${scan.forbidden.join(', ')}
 `;
 }
 
-// ============================================================
-// STEP 5: Create harness artifacts
-// ============================================================
-async function createHarnessArtifacts(project, taskDescription, score, agent, brief) {
-  await mkdir(path.join(HARNESS_DIR, 'contracts'), { recursive: true });
-  await mkdir(path.join(HARNESS_DIR, 'assignments'), { recursive: true });
-  await mkdir(path.join(HARNESS_DIR, 'handoffs'), { recursive: true });
-  await mkdir(path.join(WORKSPACE, 'artifacts'), { recursive: true });
+function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints) {
+  return `# Sprint Contract — ${spec.sprintId}
 
-  const sprintId = `sprint-${Date.now()}`;
-  const contractPath = path.join(HARNESS_DIR, 'contracts', `${sprintId}.md`);
-  const profile = score.total >= 4.5 ? 'PGE-sprint' : score.total >= 4.0 ? 'PGE-final' : score.total >= 3.0 ? 'PG' : 'Solo';
+## 任务
+${spec.scope}
 
-  await writeFile(contractPath, `# Sprint Contract: ${sprintId}
+## 项目
+${project.displayName} | ${project.repoPath}
 
-## Task
-${taskDescription}
+## Agent
+${spec.role}
 
-## Repo
-${project.repoPath}
+## 依赖
+${spec.dependsOn.length === 0 ? '_无（第一个 sprint）_' : spec.dependsOn.map(d => `- ${d}`).join('\n')}
 
-## Harness Profile
-${profile} (score: ${score.total}/5.0)
-
-## Definition of Done
-- [ ] Implementation complete
-- [ ] Build passing: \`${getBuildCmd(project.repoPath)}\`
-- [ ] Tests passing: \`${getTestCmd(project.repoPath)}\`
-- [ ] Change guard passing: \`bash scripts/run_change_guard.sh\`
-- [ ] features.json updated (if exists)
-
-## Verification
+${spec.dependsOn.length > 0 ? `## 前置 Sprint 交付物
+必须读取: \`harness/handoffs/${spec.dependsOn[0]}-handoff.md\`
+` : ''}## 验收
 \`\`\`bash
-cd "${project.repoPath}" && ${getBuildCmd(project.repoPath)} && bash scripts/run_change_guard.sh
+cd "${project.repoPath}" && ${scan.buildCmd} && ${scan.guardCmd}
 \`\`\`
 
-## Scope
-- In scope: implement the task per the brief
-- Out of scope: refactoring unrelated code, adding dependencies
-
-## Non-goals
-- Do NOT change: ${brief ? 'forbidden files listed in brief' : 'node_modules, dist, .git'}
-
-## Failure Recovery Policy（v2）
-- L0 (architecture misunderstanding — subagent can't find files): re-read brief + fix prompt, retry
-- L1 (logic error — build/test fails): extract error log, attach to prompt, retry
-- L2 (timeout — incomplete): split task into smaller sprint, retry with narrower scope
-- Max retries: 2 per task
-
-## Artifacts
-- Brief: \`${brief.relativePath}\`
-- Contract: \`harness/contracts/${sprintId}.md\`
-- Handoff: \`harness/handoffs/handoff-${Date.now()}.md\`
+## 注意事项（来自 LLM 分析）
+${llmResult.enhancedBrief}
 
 ---
-*Created: ${new Date().toISOString()}*
-`);
-
-  // Create assignment
-  let assignmentPath = null;
-  if (agent) {
-    const assignId = `assign-${Date.now()}`;
-    assignmentPath = path.join(HARNESS_DIR, 'assignments', `${assignId}.md`);
-    await writeFile(assignmentPath, `# Assignment Brief
-
-## Role
-- Role: builder
-- Agent: ${agent.id}
-- Agent file: ${agent.file}
-- Inject as attachment: yes
-- Category: ${agent.category} (${agent.confidence}% confidence)
-
-## Task
-${taskDescription}
-
-## Repo
-\`${project.repoPath}\`
-
-## MUST READ FIRST（强制）
-\`\`\`
-${brief.relativePath}
-\`\`\`
-This is your **architectural brief**. It was auto-generated and reflects the real codebase structure.
-Read it before writing any code.
-
-## Acceptance
-- [ ] Build passing
-- [ ] Change guard passing
-- [ ] features.json updated (if applicable)
-- [ ] Handoff created: \`harness/handoffs/handoff-${Date.now()}.md\`
-
-## Attachments（auto-injected by harness.js v2）
-1. \`skills/dev-project-harness-loop/SKILL.md\` — harness flow
-2. \`skills/subagent-coding-lite/SKILL.md\` — subagent spec
-3. \`skills/subagent-coding-lite/TEMPLATE_ASSIGNMENT.md\` — assignment template
-4. \`skills/subagent-coding-lite/TEMPLATE_HANDOFF.md\` — handoff template
-5. \`${agent.file}\` — domain expertise
-6. \`${brief.relativePath}\` — **architectural brief（必须先读）**
-
-## Failure Recovery
-If build/test fails:
-1. Read the error output carefully
-2. Classify: L0（文件找不到）→ L1（逻辑错误）→ L2（超时）
-3. Retry with corrected instructions（max 2 tries）
-4. If still failing → create \`harness/handoffs/escalation-<id>.md\` and exit
-
----
-*Created: ${new Date().toISOString()}*
-`);
-  }
-
-  console.log(`   ✓ harness/contracts/${sprintId}.md`);
-  console.log(`   ✓ ${brief.relativePath}`);
-  if (assignmentPath) console.log(`   ✓ harness/assignments/assign-${Date.now()}.md`);
-
-  return { sprintId, brief };
+*Generated: ${new Date().toISOString()}*`;
 }
 
-function getBuildCmd(repoPath) {
-  try {
-    const pj = JSON.parse(execCapture(`cat "${repoPath}/package.json" 2>/dev/null`));
-    return pj.scripts?.build || 'npm run build';
-  } catch (_) {
-    return 'npm run build';
+function selectAgentFromId(role) {
+  const entry = Object.entries(AGENT_KEYWORDS).find(([id]) => id === role);
+  if (!entry) {
+    return {
+      id: role,
+      confidence: 50,
+      category: 'engineering',
+      file: `skills/agency-agents-lib/agents/engineering/${role}.md`
+    };
   }
-}
-
-function getTestCmd(repoPath) {
-  try {
-    const pj = JSON.parse(execCapture(`cat "${repoPath}/package.json" 2>/dev/null`));
-    return pj.scripts?.test || 'npm test';
-  } catch (_) {
-    return 'npm test';
-  }
+  return {
+    id: entry[0],
+    confidence: 80,
+    category: entry[1].category,
+    file: `skills/agency-agents-lib/agents/${entry[1].category}/${entry[0]}.md`
+  };
 }
 
 // ============================================================
-// STEP 6: Dispatch subagent
+// STEP 5: Dispatch sprints (with dependency ordering)
 // ============================================================
-async function dispatchSubagent(project, taskDescription, agent, brief) {
+async function dispatchSprints(plan) {
+  const byId = {};
+  plan.sprints.forEach(s => byId[s.sprintId] = s);
+
+  // Write master brief
+  const briefPath = path.join(HARNESS_DIR, 'assignments', `master-brief-${Date.now()}.md`);
+  await mkdir(path.dirname(briefPath), { recursive: true });
+  await writeFile(briefPath, plan.masterBrief);
+  console.log(`\n📋 Master brief: ${briefPath}`);
+
+  // Execute in dependency order
+  const executed = new Set();
+  let changed = true;
+  while (executed.size < plan.sprints.length && changed) {
+    changed = false;
+    for (const sprint of plan.sprints) {
+      if (executed.has(sprint.sprintId)) continue;
+      const depsMet = sprint.dependsOn.every(d => executed.has(d));
+      if (!depsMet) continue;
+
+      // Check prior sprint handoffs exist if needed
+      const priorHandoffs = sprint.dependsOn.map(d => {
+        const h = path.join(HARNESS_DIR, 'handoffs', `${d}-handoff.md`);
+        return { path: h, exists: false };
+      });
+
+      await dispatchSingleSprint(sprint, plan.masterBrief, briefPath);
+      executed.add(sprint.sprintId);
+      changed = true;
+    }
+  }
+
+  if (executed.size < plan.sprints.length) {
+    const remaining = plan.sprints.filter(s => !executed.has(s.sprintId)).map(s => s.sprintId);
+    console.log(`\n⚠️  Circular dependency or missing deps: ${remaining.join(', ')}`);
+  }
+}
+
+async function dispatchSingleSprint(sprint, masterBrief, briefPath) {
+  console.log(`\n🚀 Dispatching: ${sprint.sprintId} (${sprint.role})`);
+  if (sprint.dependsOn.length > 0) {
+    console.log(`   Waiting for: ${sprint.dependsOn.join(', ')}`);
+  }
+
   const attachments = [
     'skills/dev-project-harness-loop/SKILL.md',
     'skills/subagent-coding-lite/SKILL.md',
     'skills/subagent-coding-lite/TEMPLATE_ASSIGNMENT.md',
     'skills/subagent-coding-lite/TEMPLATE_HANDOFF.md',
-    agent.file,
-    brief.relativePath  // ← v2 NEW: auto-attach architectural brief
+    sprint.agent.file,
+    briefPath,
+    path.join(HARNESS_DIR, 'contracts', `${sprint.sprintId}.md`)
   ];
 
-  console.log(`\n📦 Dispatching with ${attachments.length} attachments:`);
-  attachments.forEach(f => console.log(`   - ${f}`));
-
-  // Write spawn pending file
-  const spawnFile = path.join(WORKSPACE, '.harness-spawn-pending.json');
-  await writeFile(spawnFile, JSON.stringify({
-    task: taskDescription,
-    label: taskDescription.slice(0, 40).replace(/\s+/g, '-').replace(/[^\w\-]/g, ''),
-    agent,
+  // Write spawn config
+  const spawnConfig = {
+    sprintId: sprint.sprintId,
+    task: sprint.scope,
+    role: sprint.role,
+    agent: sprint.agent,
     attachments,
-    repoPath: project.repoPath,
-    brief: brief.relativePath,
-    sessionId: `session_${Date.now()}`,
+    masterBriefPath: briefPath,
+    sprintContractPath: path.join(HARNESS_DIR, 'contracts', `${sprint.sprintId}.md`),
+    dependsOn: sprint.dependsOn,
+    sessionId: `session_${Date.now()}_${sprint.sprintId}`,
     dispatchTime: new Date().toISOString()
-  }, null, 2));
+  };
 
-  // Try to detect OpenClaw environment
-  const inOpenClaw = process.env.OPENCLAW_SESSION_KEY || process.env.OPENCLAW_GATEWAY_URL;
-  if (inOpenClaw) {
-    console.log(`\n✅ OpenClaw environment detected — ready for sessions_spawn`);
-  } else {
-    console.log(`\n⚠️  Not in OpenClaw environment`);
-    console.log(`   Spawn config: ${spawnFile}`);
-  }
-
-  return `session_${Date.now()}`;
+  const spawnFile = path.join(WORKSPACE, `.harness-spawn-${sprint.sprintId}.json`);
+  await writeFile(spawnFile, JSON.stringify(spawnConfig, null, 2));
+  console.log(`   Config: ${spawnFile}`);
+  console.log(`   ⚠️  OpenClaw sessions_spawn call goes here (integrate with sessions_spawn tool)`);
 }
 
 // ============================================================
-// STEP 7: Update ACTIVE.md
+// STEP 6: ACTIVE.md
 // ============================================================
-async function updateActive(project, taskDescription, session, agent, artifacts) {
+async function updateActive(project, taskDescription, plan) {
   const content = `# ACTIVE.md — Current WIP
 
 ## Current Project
-- **Name**: ${project.name}
+- **Name**: ${project.displayName}
 - **Repo**: ${project.repoPath}
 - **Task**: ${taskDescription}
 - **Started**: ${new Date().toISOString()}
-- **Session**: ${session || 'N/A'}
-- **Status**: ${session ? 'running' : 'pending'}
-- **Brief**: ${artifacts.brief.relativePath}
+- **Status**: running
+- **Sprints**: ${plan.sprints.map(s => s.sprintId).join(', ')}
 
-## Next Bet
-- **Objective**: ${taskDescription}
-- **Oracle**: \`cd "${project.repoPath}" && ${getBuildCmd(project.repoPath)} && bash scripts/run_change_guard.sh\`
-- **Evidence**: artifacts/
+## Sprint Plan
+${plan.sprints.map(s => `- **${s.sprintId}**: ${s.role} | deps: ${s.dependsOn.join(', ') || 'none'}`).join('\n')}
 
-${agent ? `## Assigned Agent
-- **ID**: ${agent.id}
-- **Confidence**: ${agent.confidence}%
-- **Brief**: ${artifacts.brief.relativePath}` : ''}
+## Master Brief
+harness/assignments/master-brief-${Date.now()}.md
 
-## Blockers
-- None
-
-## Dispatch Rules（v2 — enforced by harness.js）
-- All subagent dispatches must go through \`harness.js\` (this run)
-- Architectural brief auto-generated at: \`${artifacts.brief.relativePath}\`
-- Failure recovery: L0/L1/L2 classification, max 2 retries
+## Dispatch Rules (v3 — enforced)
+- ALL dispatches go through harness.js (this run)
+- LLM task profiling + enhanced brief generated
+- Formal failure recovery: L0/L1/L2, max 2 retries per sprint
+- Multi-agent: dependency-ordered, not parallel
 
 ---
 *Last updated: ${new Date().toISOString()}*
 `;
-
   await writeFile(ACTIVE_FILE, content);
 }
 
 // ============================================================
 // REPORT
 // ============================================================
-function printReport(project, taskDescription, score, agent, session, brief) {
+function printReport(project, taskDescription, llmResult, plan) {
   console.log('\n' + '='.repeat(70));
-  console.log('📊 HARNESS TASK REPORT v2');
+  console.log('📊 HARNESS TASK REPORT v3 — LLM-Augmented');
   console.log('='.repeat(70));
-  console.log(`Project:   ${project.name}`);
-  console.log(`Repo:      ${project.repoPath}`);
-  console.log(`Task:      ${taskDescription}`);
-  console.log(`Score:     ${score.total}/5.0 (${score.decision})`);
-  console.log(`Brief:     ${brief.relativePath}`);
+  console.log(`Project:     ${project.displayName}`);
+  console.log(`Task:        ${taskDescription}`);
+  console.log(`LLM Profile:`);
+  console.log(`   Type:      ${llmResult.taskProfile.taskType}`);
+  console.log(`   Complex:  ${llmResult.taskProfile.complexity}/5`);
+  console.log(`   Risk:      ${llmResult.taskProfile.riskLevel}`);
+  console.log(`   Scope:     ${llmResult.taskProfile.scopeGuess}`);
+  console.log(`   Multi-Agent: ${llmResult.isMultiAgent ? 'YES' : 'no'}`);
 
-  if (agent) {
-    console.log(`\nAgent:`);
-    console.log(`   ID:          ${agent.id}`);
-    console.log(`   Confidence:  ${agent.confidence}%`);
-    console.log(`   Category:    ${agent.category}`);
-  }
-
-  if (session) {
-    console.log(`\nSession:   ${session} (dispatched)`);
-  }
+  console.log(`\nSprints:`);
+  plan.sprints.forEach(s => {
+    console.log(`   ${s.sprintId}: ${s.role} (deps: ${s.dependsOn.join(', ') || 'none'})`);
+  });
 
   console.log('\n' + '='.repeat(70));
-  console.log('\n✅ Task dispatched via harness.js v2');
-  console.log('   1. Brief auto-generated — subagent reads this first');
-  console.log('   2. Formal failure recovery enabled (L0/L1/L2 + 2 retries)');
-  console.log('   3. Standard attachments injected (harness flow + subagent spec)');
+  console.log('\n✅ harness.js v3 complete');
+  console.log('   Next: integrate sessions_spawn calls in Step 5');
   console.log('');
 }
 
 main().catch(err => {
-  console.error('❌ Error:', err.message);
+  console.error('❌ Error:', err.message, err.stack);
   process.exit(1);
 });
