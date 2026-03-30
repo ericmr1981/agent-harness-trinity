@@ -13,7 +13,7 @@
  * Usage:
  *   /harness [flags] <task description>
  *   /harness --mode minimal "改错别字"
- *   /harness --mode keyword --complexity 3 "单文件改动"
+ *   /harness --mode keyword --complexity 3 "单文件改动"\n *   /harness --no-preflight "快速实验（跳过 harness 检测）"
  *   /harness --complexity 7 "复杂多角色任务"
  */
 
@@ -43,7 +43,7 @@ const TASK_ARGS   = rawArgs.filter(a => !a.startsWith('--'));
 const taskDescription = TASK_ARGS.join(' ') || '';
 
 if (!taskDescription) {
-  console.error('❌ Usage: /harness [flags] <task description>\n   Flags: --mode <minimal|keyword|llm|llm-full> --complexity <0-10> --dry-run');
+  console.error('❌ Usage: /harness [flags] <task description>\n   Flags: --mode <minimal|keyword|llm|llm-full> --complexity <0-10> --no-preflight --dry-run');
   process.exit(1);
 }
 
@@ -92,6 +92,11 @@ async function main() {
   // Step 1: Discover project
   const project = await discoverProject(taskDescription);
   console.log(`📁 Project: ${project.displayName} | Repo: ${project.repoPath}`);
+
+  // Step 1.5: HARNESS PRE-FLIGHT CHECK (skipped in minimal mode, or with --no-preflight)
+  if (MODE_ARG !== 'minimal' && !rawArgs.includes('--no-preflight')) {
+    await preflightHarnessCheck(project.repoPath);
+  }
 
   // Step 2: Repo scan (skip in minimal mode)
   let scan = null;
@@ -230,6 +235,37 @@ async function inferProjectFromGithub(lower) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// STEP 1.5: HARNESS PRE-FLIGHT CHECK (v4)
+// ─────────────────────────────────────────────────────────────
+/**
+ * Check if the target repo has minimum Trinity harness files.
+ * If missing: warn but continue (degraded mode with guardCmd='unknown').
+ * Use --no-preflight to skip entirely (for quick experiments).
+ */
+async function preflightHarnessCheck(repoPath) {
+  const minHarness = [
+    'CLAUDE.md',
+    'AGENTS.md',
+    'scripts/run_change_guard.sh',
+  ];
+
+  const missing = [];
+  for (const file of minHarness) {
+    try { await stat(path.join(repoPath, file)); } catch (_) { missing.push(file); }
+  }
+
+  if (missing.length > 0) {
+    console.log('\n⚠️  HARNESS PRE-FLIGHT: Project not Trinity-initialized');
+    console.log('   Missing: ' + missing.join(', '));
+    console.log('   Recommendation: Initialize first:');
+    console.log('     bash project-harness-guards/scripts/scaffold_harness.sh "${repoPath}"');
+    console.log('   Or run with --no-preflight to skip.\n');
+  } else {
+    console.log('   ✅ Minimum harness detected');
+  }
+}
+
 // STEP 2: Repo scan (unchanged from v3, gated by mode)
 // ─────────────────────────────────────────────────────────────
 async function scanRepo(repoPath) {
