@@ -304,7 +304,14 @@ Examples:
 async function detectProject(taskDescription) {
   const lower = taskDescription.toLowerCase();
 
-  // Try ACTIVE.md first
+  // Priority 1: Task description (most specific — user explicitly names a project)
+  for (const [key, repoPath] of Object.entries(KNOWN_REPOS)) {
+    if (lower.includes(key)) {
+      return { name: key, repoPath, location: repoPath };
+    }
+  }
+
+  // Priority 2: ACTIVE.md (current session's active project)
   try {
     const content = await readFile(ACTIVE_FILE, 'utf8');
     const match = content.match(/\*\*Name\*\*:\s*(.+)/);
@@ -313,13 +320,6 @@ async function detectProject(taskDescription) {
       if (repoPath) return { name: match[1].trim(), repoPath, location: repoPath };
     }
   } catch (_) {}
-
-  // Try to detect from task description (look for known project names)
-  for (const [key, repoPath] of Object.entries(KNOWN_REPOS)) {
-    if (lower.includes(key)) {
-      return { name: key, repoPath, location: repoPath };
-    }
-  }
 
   // Default: use workspace
   return { name: 'workspace', repoPath: WORKSPACE, location: WORKSPACE };
