@@ -165,20 +165,20 @@ async function discoverProject(taskDescription) {
   const lower = taskDescription.toLowerCase();
 
   // Step A: TASKS.md (primary source)
+  // Match rule: bidirectional substring check on full name + core (name stripped of parentheticals)
   try {
     const tasksContent = await readFile(TASKS_FILE, 'utf8');
     const entries = parseTASKS(tasksContent);
     for (const [name, info] of Object.entries(entries)) {
-      // Match by name or any known alias
-      const nameMatch = name.toLowerCase().replace(/[（ (）《》【】]/g, '');
-      const queryKey = lower.replace(/\s+/g, ''); // strip spaces from query
-      if (
-        lower.includes(name.toLowerCase()) ||
-        name.toLowerCase().includes(lower) ||
-        lower.includes(nameMatch) ||
-        nameMatch.includes(queryKey) ||
-        (info.alias || []).some(a => lower.includes(a.toLowerCase()))
-      ) {
+      const nm = name.toLowerCase();
+      // Core = name stripped of parenthetical suffix: "WDG（...）" → "wdg"
+      const core = nm.replace(/[（\uff08][^）\uff09]*[）\uff09]?\s*$/, '').trim();
+      // Bidirectional match: handles both "WDG" in "WDG（...）" and "Pipi-go" in "Pipi-go（...）"
+      const nameMatch = lower.includes(nm) || nm.includes(lower) ||
+                        lower.includes(core)  || core.includes(lower);
+      if (nameMatch) return { displayName: name, repoPath: info.repoPath || WORKSPACE, source: 'TASKS.md' };
+      // Alias match
+      if ((info.alias || []).some(a => lower.includes(a.toLowerCase()))) {
         return { displayName: name, repoPath: info.repoPath || WORKSPACE, source: 'TASKS.md' };
       }
     }
