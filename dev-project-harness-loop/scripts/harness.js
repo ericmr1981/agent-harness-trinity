@@ -29,8 +29,9 @@ const __dirname = path.dirname(__filename);
 const WORKSPACE      = process.env.OPENCLAW_WORKSPACE || process.cwd();
 const HARNESS_DIR    = path.join(WORKSPACE, 'harness');
 const REPORTS_DIR    = path.join(HARNESS_DIR, 'reports');
-const ACTIVE_FILE    = path.join(WORKSPACE, 'ACTIVE.md');
-const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');
+const WORKSPACE_ROOT = WORKSPACE;                                          // workspace root (parent of all project repos)
+const WORKSPACE_INDEX = path.join(WORKSPACE_ROOT, 'WORKSPACE.md');         // project index (not content)
+const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');                 // legacy tasks index
 const GITHUB_ROOT    = process.env.GITHUB_ROOT || '/Users/ericmr/Documents/GitHub';
 
 // ─────────────────────────────────────────────────────────────
@@ -939,12 +940,88 @@ async function dispatchSingleSprint(sprint, masterBrief, briefPath, globalMatrix
 // ─────────────────────────────────────────────────────────────
 // STEP 8: ACTIVE.md (updated with v4 fields)
 // ─────────────────────────────────────────────────────────────
+// WORKSPACE INDEX — per-project ACTIVE.md + workspace registry
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Update workspace-level WORKSPACE.md index.
+ * This file is the only artifact in the workspace root;
+ * all project state lives inside each project's repo as ACTIVE.md.
+ *
+ * Format:
+ * # WORKSPACE Index
+ * ## Active Projects
+ * | Project | ACTIVE.md | Status | Last Updated |
+ * |---|---|---|---|
+ * | WDG | /path/to/repo/ACTIVE.md | running | 2026-04-01T00:00:00Z |
+ *
+ * ## Current Focus
+ * - wdg（可切换）
+ */
+async function ensureWorkspaceIndex(project, taskDescription, plan, activeStatus = 'running') {
+  let indexContent = '';
+  let entries = [];
+
+  try {
+    const raw = await readFile(WORKSPACE_INDEX, 'utf8');
+    // Extract existing entries by parsing the table rows
+    const tableMatch = raw.match(/\| Project(.+?)\n[^|]*$/s);
+    if (tableMatch) {
+      const rows = raw.split('\n').filter(l => l.trim().startsWith('|') && !l.includes('---') && !l.includes('Project |'));
+      for (const row of rows) {
+        const cols = row.split('|').map(c => c.trim()).filter(Boolean);
+        if (cols.length >= 3) entries.push({ project: cols[0], activePath: cols[1], status: cols[2], updated: cols[3] || '' });
+      }
+    }
+  } catch (_) {
+    // No index yet — start fresh
+    indexContent = `# WORKSPACE Index
+
+> Managed by harness.js v4 | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
+
+## Active Projects
+| Project | ACTIVE.md Path | Status | Last Updated |
+|---------|----------------|--------|--------------|
+`;
+  }
+
+  // Update or add entry for this project
+  const activePath = path.join(project.repoPath, 'ACTIVE.md');
+  const updated = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const existingIdx = entries.findIndex(e => e.project === project.displayName || e.project.toLowerCase() === project.displayName.toLowerCase());
+  if (existingIdx >= 0) {
+    entries[existingIdx] = { project: project.displayName, activePath, status: activeStatus, updated };
+  } else {
+    entries.push({ project: project.displayName, activePath, status: activeStatus, updated });
+  }
+
+  // Rebuild index
+  const rows = entries.map(e => `| ${e.project} | \`${e.activePath}\` | ${e.status} | ${e.updated} |`).join('\n');
+  const header = `# WORKSPACE Index
+
+> Managed by harness.js v4 | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
+
+## Active Projects
+| Project | ACTIVE.md Path | Status | Last Updated |
+|---------|----------------|--------|--------------|
+`;
+
+  indexContent = header + rows + '\n';
+  await writeFile(WORKSPACE_INDEX, indexContent);
+  console.log(`   🗂  Workspace index updated: ${WORKSPACE_INDEX}`);
+}
+
+// ─────────────────────────────────────────────────────────────
 async function updateActive(project, taskDescription, plan) {
+  // Write ACTIVE.md inside the project's repo (per-project isolation)
+  const projectActiveFile = path.join(project.repoPath, 'ACTIVE.md');
   const { matrixFlags = [] } = plan;
   const flagSummary = matrixFlags.length > 0
     ? `\n## Matrix Flags\n${matrixFlags.map(f => `- [${f.flag}] ${f.note}`).join('\n')}` : '';
 
   const content = `# ACTIVE.md — Current WIP
+
+> This file lives inside the project repo. The workspace root WORKSPACE.md is only an index.
 
 ## Current Project
 - **Name**: ${project.displayName}
@@ -965,12 +1042,17 @@ ${plan.sprints.map(s => {
 ${path.join(HARNESS_DIR, 'assignments')}/master-brief-${Date.now()}.md
 
 ## Version
-harness.js v4 | complexity scoring | selective attachments | agency decision tree
+harness.js v4 | per-project ACTIVE.md | workspace index | ContextAssembler
 
 ---
 *Last updated: ${new Date().toISOString()}*
 `;
-  await writeFile(ACTIVE_FILE, content);
+
+  await writeFile(projectActiveFile, content);
+  console.log(`   ✅ ACTIVE.md written to project repo: ${projectActiveFile}`);
+
+  // Update workspace root index
+  await ensureWorkspaceIndex(project, taskDescription, plan);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1126,6 +1208,8 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
 
   console.log('\n' + '='.repeat(70));
   console.log('\n✅ harness.js v4 complete');
+  console.log('   ACTIVE.md written to project repo (per-project isolation)');
+  console.log('   Workspace index updated: WORKSPACE.md');
   console.log('   Next: confirm with Boss → sessions_spawn dispatch');
   console.log('   After sprint: fill → harness/reports/sprint-*-report.md');
   console.log('');

@@ -45,6 +45,13 @@ At session start, always:
 - inspect `features.json` for remaining `passes=false`
 - run `bash init.sh` if environment may have drifted
 
+**Per-project ACTIVE.md (Plan B design):**
+- Project state lives **inside each project repo** as `ACTIVE.md`
+- The workspace root only has `WORKSPACE.md` — a lightweight index (no project content)
+- When resuming a project: read `ACTIVE.md` from that project's repo, not workspace root
+- On new dispatch: `updateActive()` writes to `<project-repo>/ACTIVE.md` and updates `WORKSPACE.md` index
+- Legacy workspace-level `ACTIVE.md` files should be migrated to each project's repo
+
 ## Step 1.5) ContextAssembler — project-aware context package (NEW)
 
 **Before every `/harness` dispatch**, ContextAssembler runs automatically (except in `--mode minimal`):
@@ -199,12 +206,15 @@ When verification fails, follow `references/failure-recovery-protocol.md`:
 
 At session start, follow `references/auto-resume-protocol.md`:
 
-1. **Read ACTIVE.md** → Check for running session
-2. **If running**: Fetch session history, extract handoff, resume
-3. **If not running**: Read harness truth (contracts, features.json, CHANGELOG)
-4. **Reconcile**: Decide whether to continue session or start from harness
+1. **Read WORKSPACE.md** (workspace root) → find active project index
+2. **Read per-project ACTIVE.md** (inside project repo) → Check for running session
+3. **If running**: Fetch session history, extract handoff, resume
+4. **If not running**: Read harness truth (contracts, features.json, CHANGELOG)
+5. **Reconcile**: Decide whether to continue session or start from harness
 
 **Key rule**: Don't ask human "what was I doing?". Resume from files automatically.
+
+**Per-project isolation:** Each project repo has its own `ACTIVE.md`. The workspace root `WORKSPACE.md` is an index only — never write project content there.
 
 ---
 
