@@ -21,6 +21,7 @@ import { readFile, writeFile, mkdir, readdir, stat } from 'fs/promises';
 import { execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { run as runContextAssembler } from './context-assembler/context-assembler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,7 +94,17 @@ async function main() {
   const project = await discoverProject(taskDescription);
   console.log(`📁 Project: ${project.displayName} | Repo: ${project.repoPath}`);
 
-  // Step 1.5: HARNESS PRE-FLIGHT CHECK (skipped in minimal mode, or with --no-preflight)
+  // Step 1.5: CONTEXT ASSEMBLER (skipped in minimal mode)
+  let contextPackagePath = null;
+  if (MODE_ARG !== 'minimal') {
+    try {
+      contextPackagePath = await runContextAssembler(project.repoPath, taskDescription);
+    } catch (e) {
+      console.log(`   ⚠️  ContextAssembler failed (${e.message}), continuing without context package`);
+    }
+  }
+
+  // Step 1.75: HARNESS PRE-FLIGHT CHECK (skipped in minimal mode, or with --no-preflight)
   if (MODE_ARG !== 'minimal' && !rawArgs.includes('--no-preflight')) {
     await preflightHarnessCheck(project.repoPath);
   }
@@ -135,7 +146,7 @@ async function main() {
   }
 
   // Step 6: Sprint plan
-  const plan = await generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack);
+  const plan = await generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath);
 
   // Step 7: Dispatch
   if (!DRY_RUN) {
@@ -681,7 +692,7 @@ async function handleClarification(llmResult) {
 // ─────────────────────────────────────────────────────────────
 // STEP 5: Sprint plan (updated for v4)
 // ─────────────────────────────────────────────────────────────
-async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack) {
+async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath) {
   const sprints = [];
   const baseDir = path.join(HARNESS_DIR, 'contracts');
   await mkdir(baseDir, { recursive: true });
@@ -816,13 +827,19 @@ function selectAgentFromId(role) {
  * standard → TEMPLATE_BRIEF.md only
  * full     → 5-6 files
  */
-function buildAttachments(agent, sprintBriefPath, sprintContractPath, tier) {
+function buildAttachments(agent, sprintBriefPath, sprintContractPath, tier, contextPackagePath = null) {
+  // Context package always first (prepended for all non-minimal tiers)
+  const contextFile = contextPackagePath
+    ? [contextPackagePath.replace(process.cwd() + '/', '')]
+    : [];
+
   if (tier === 'minimal') {
-    return []; // No files — main agent sends goal in task message directly
+    return contextFile; // Context package only in minimal (better than nothing)
   }
 
   if (tier === 'standard') {
     return [
+      ...contextFile,
       'skills/subagent-coding-lite/TEMPLATE_BRIEF.md',
       sprintContractPath
     ];
@@ -830,6 +847,7 @@ function buildAttachments(agent, sprintBriefPath, sprintContractPath, tier) {
 
   // full tier
   const files = [
+    ...contextFile,
     'skills/dev-project-harness-loop/SKILL.md',
     'skills/subagent-coding-lite/SKILL.md',
     'skills/subagent-coding-lite/TEMPLATE_BRIEF.md',
@@ -868,7 +886,7 @@ async function dispatchSprints(plan) {
       const depsMet = sprint.dependsOn.every(d => executed.has(d));
       if (!depsMet) continue;
 
-      await dispatchSingleSprint(sprint, plan.masterBrief, briefPath, plan.matrixFlags || []);
+      await dispatchSingleSprint(sprint, plan.masterBrief, briefPath, plan.matrixFlags || [], contextPackagePath);
       executed.add(sprint.sprintId);
       changed = true;
     }
@@ -880,15 +898,16 @@ async function dispatchSprints(plan) {
   }
 }
 
-async function dispatchSingleSprint(sprint, masterBrief, briefPath, globalMatrixFlags = []) {
+async function dispatchSingleSprint(sprint, masterBrief, briefPath, globalMatrixFlags = [], contextPackagePath = null) {
   console.log(`\n🚀 Dispatching: ${sprint.sprintId} (${sprint.role})`);
   if (sprint.dependsOn.length > 0) console.log(`   Waiting for: ${sprint.dependsOn.join(', ')}`);
 
   const allFlags = [...globalMatrixFlags, ...(sprint.matrixFlags || [])];
   if (allFlags.length > 0) allFlags.forEach(f => console.log(`   ⚡ [${f.flag}] ${f.note}`));
   console.log(`   📦 Attachments: ${sprint.attachmentTier} tier (${sprint.attachmentTier === 'minimal' ? 'none' : sprint.attachmentTier === 'standard' ? 'TEMPLATE_BRIEF + contract' : 'full'})`);
+  if (contextPackagePath) console.log(`   🗂  Context: ${contextPackagePath.replace(process.cwd() + '/', '')}`);
 
-  const attachments = buildAttachments(sprint.agent, briefPath, path.join(HARNESS_DIR, 'contracts', `${sprint.sprintId}.md`), sprint.attachmentTier);
+  const attachments = buildAttachments(sprint.agent, briefPath, path.join(HARNESS_DIR, 'contracts', `${sprint.sprintId}.md`), sprint.attachmentTier, contextPackagePath);
 
   // Write sprint contract file
   const contractPath = path.join(HARNESS_DIR, 'contracts', `${sprint.sprintId}.md`);
@@ -901,6 +920,7 @@ async function dispatchSingleSprint(sprint, masterBrief, briefPath, globalMatrix
     role: sprint.role,
     agent: sprint.agent,
     attachments,
+    contextPackagePath,
     attachmentTier: sprint.attachmentTier,
     masterBriefPath: briefPath,
     sprintContractPath: contractPath,

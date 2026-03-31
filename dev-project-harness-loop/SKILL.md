@@ -45,6 +45,38 @@ At session start, always:
 - inspect `features.json` for remaining `passes=false`
 - run `bash init.sh` if environment may have drifted
 
+## Step 1.5) ContextAssembler — project-aware context package (NEW)
+
+**Before every `/harness` dispatch**, ContextAssembler runs automatically (except in `--mode minimal`):
+
+```
+ContextAssembler(repoPath, taskDescription)
+    ├── git state        → branch / status / recent commits / uncommitted diff
+    ├── features.json    → unfinished features (passes=false)
+    ├── harness/contracts → latest sprint contract
+    ├── harness/handoffs → latest handoff packet
+    ├── ACTIVE.md        → current WIP state
+    └── relevant sources → task-keyword-matched source files (top 12, ≤8KB each)
+         ↓
+harness/context/context-package-<timestamp>.md
+         ↓
+Injected as FIRST attachment in subagent context
+```
+
+**Why it matters:**
+- Subagent starts with real project state, not a blank slate
+- Reduces model "hallucination" about codebase structure
+- Bridges the gap between "tool-rich" and "context-aware" agent
+
+**Files produced:**
+- `harness/context/context-package-<timestamp>.md` — full context package
+- Referenced in spawn config as `contextPackagePath`
+
+**When skipped:**
+- `--mode minimal` — ContextAssembler skipped, subagent gets goal text only
+
+**See also:** `scripts/context-assembler/context-assembler.js`
+
 ## Step 2) Establish the Goal Contract
 
 Before doing iterative execution, define the durable project frame.
@@ -221,3 +253,4 @@ Pause and ask the human only if:
 - `references/rubrics/frontend.md`
 - `references/rubrics/fullstack.md`
 - `references/anthropic-effective-harnesses-mapping.md` (Anthropic 编排 → 三技能家族落地对照卡)
+- `scripts/context-assembler/context-assembler.js` (ContextAssembler — context package builder for subagent injection)
