@@ -159,47 +159,78 @@ async function main() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// STEP 1: Project discovery (unchanged from v3)
+// STEP 1: Project discovery (v4 — no ACTIVE.md fallback)
 // ─────────────────────────────────────────────────────────────
 async function discoverProject(taskDescription) {
   const lower = taskDescription.toLowerCase();
 
+  // Step A: TASKS.md (primary source)
   try {
     const tasksContent = await readFile(TASKS_FILE, 'utf8');
     const entries = parseTASKS(tasksContent);
     for (const [name, info] of Object.entries(entries)) {
-      if (lower.includes(name.toLowerCase()) || (info.alias || []).some(a => lower.includes(a.toLowerCase()))) {
-        return { displayName: name, repoPath: info.repoPath || info.path || WORKSPACE, source: 'TASKS.md' };
+      // Match by name or any known alias
+      const nameMatch = name.toLowerCase().replace(/[（ (）《》【】]/g, '');
+      const queryKey = lower.replace(/\s+/g, ''); // strip spaces from query
+      if (
+        lower.includes(name.toLowerCase()) ||
+        name.toLowerCase().includes(lower) ||
+        lower.includes(nameMatch) ||
+        nameMatch.includes(queryKey) ||
+        (info.alias || []).some(a => lower.includes(a.toLowerCase()))
+      ) {
+        return { displayName: name, repoPath: info.repoPath || WORKSPACE, source: 'TASKS.md' };
       }
     }
   } catch (_) {}
 
-  try {
-    const activeContent = await readFile(ACTIVE_FILE, 'utf8');
-    const projectMatch  = activeContent.match(/\*\*Name\*\*:\s*(.+)/);
-    const pathMatch     = activeContent.match(/\*\*Repo\*\*:\s*(.+)/);
-    if (projectMatch) {
-      const name = projectMatch[1].trim();
-      const repoPath = pathMatch ? pathMatch[1].trim() : null;
-      const found = await findRepoInGithubRoot(name);
-      return { displayName: name, repoPath: found || repoPath || WORKSPACE, source: 'ACTIVE.md' };
-    }
-  } catch (_) {}
-
+  // Step B: github-scan (secondary fallback — NO ACTIVE.md)
   const guessed = await inferProjectFromGithub(lower);
   if (guessed) return guessed;
 
   return { displayName: 'workspace', repoPath: WORKSPACE, source: 'default' };
 }
 
+// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// parseTASKS — string-based parser for TASKS.md
+// Avoids regex pitfalls with full-width ： and ** in char classes
+// ─────────────────────────────────────────────────────────────
 function parseTASKS(content) {
   const entries = {};
-  const blockRe = /\*\*Project (?:number|)[:：]?\s*\*?(.+?)[\s\S]*?(?:Repo|Location)[:：]\s*`?([^`\n]+)`?/g;
-  let match;
-  while ((match = blockRe.exec(content)) !== null) {
-    const name = match[1].trim();
-    let repoPath = match[2].trim();
-    if (repoPath.startsWith('/')) entries[name] = { repoPath };
+  const lines = content.split('\n');
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.includes('**Project number') && (line.includes('\uff1a') || line.includes(':'))) {
+      let name = null;
+      let j = i + 1;
+      while (j < lines.length && j < i + 6) {
+        const cand = lines[j];
+        if (cand.includes('**Project number')) break;
+        if (cand.includes('**Project name')) {
+          const marker = '**Project name';
+          const afterMarker = cand.slice(cand.indexOf(marker) + marker.length + 1);
+          name = afterMarker.trim().replace(/^[^\w\u4e00-\u9fa5]+/, '').trim();
+          break;
+        }
+        j++;
+      }
+      let repoPath = null;
+      let k = i + 1;
+      while (k < lines.length && k < i + 8) {
+        const cand = lines[k];
+        if (cand.includes('**Project number')) break;
+        const bq = cand.match(/`([^`]+)`/);
+        if (bq) { repoPath = bq[1].trim(); break; }
+        k++;
+      }
+      if (name && repoPath) entries[name] = { repoPath };
+      i = k;
+    } else {
+      i++;
+    }
   }
   return entries;
 }
