@@ -49,8 +49,9 @@
 ## 三点五、版本轨道
 
 - **当前稳定基线**：`harness.js v4`
-- **下一版本设计稿**：`v5 Continue Gate + Pivot`
+- **下一版本轨道**：`v5 Continue Gate + Pivot`
 - **v5 目标**：堵住“最终 oracle 未通过但先进入汇报模式”的侧门；失败后默认继续修复，连续两轮无新证据时自动换策略并告知 Boss。
+- **当前实现状态**：已落地 v5-preview scaffolding（`harness.js` 输出字段 + ACTIVE/report/contract 模板字段 + failure recovery / assignment header 规则），完整闭环仍待继续推进。
 - 设计入口：
   - `skills/harness-dispatch/references/v5-continue-gate.md`
   - `dev-project-harness-loop/references/v5-continue-gate.md`

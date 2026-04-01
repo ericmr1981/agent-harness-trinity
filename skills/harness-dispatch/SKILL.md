@@ -116,6 +116,19 @@ const effectiveMode = (channel === "telegram") ? "run" : "session";
 
 **503 优先验证原则**：503 announce 失败 ≠ 工作失败。先验证，再决策。
 
+### Step 5.5: Continue Gate（v5 preview）
+
+失败 oracle 后的默认动作不是汇报，而是以下三选一：
+- `retry_with_new_bet`：最终 oracle 未通过，但下一步修复明确
+- `pivot_required`：同一路径连续两轮没有新的有效证据，自动换策略并告知 Boss
+- `blocked_external` / `blocked_approval`：只有遇到外部阻塞或审批边界才允许停
+
+**不是完成条件的信号：**
+- build/test 通过
+- 问题已收敛
+- 已识别 blocker 但仍可继续处理
+- 局部链路通过但最终 oracle 未过
+
 ---
 
 ## 📋 Mode × Attachment × Token 对照

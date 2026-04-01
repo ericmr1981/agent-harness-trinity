@@ -48,9 +48,12 @@ State explicitly what the worker may do.
 - Must NOT commit / push / change remote state unless explicitly allowed
 
 ### 6) Acceptance target
+- Final oracle (true completion condition):
 - Done means (observable outcomes):
 - Required checks (L1):
 - User scenarios (L2): at least happy path + edge/error when user-visible
+- Stop allowed before final oracle passes: yes | no
+- Next forced bet if final oracle fails:
 - Evidence required in final response:
 
 ### 7) Output contract
@@ -139,6 +142,7 @@ Return:
 - approval boundary hit
 - contract missing / ambiguous
 - repeated attempts fail without new evidence
+- two consecutive rounds on the same branch produce no meaningful new evidence (pivot and notify Boss; do not wait for confirmation unless approval boundary changes)
 ```
 
 ## Writing style rules

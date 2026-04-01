@@ -171,8 +171,22 @@ After each bounded round:
 3) record failed / partial work with evidence
 4) pick the highest-priority unfinished task
 5) decide whether to continue immediately
+6) explicitly check: **if I stop now, can the human accept the final goal?**
 
 If meaningful unfinished work remains and no blocker / approval boundary / major pivot exists, launch the next round without asking the human.
+
+### Continue Gate (v5 preview)
+Use explicit round outcomes:
+- `goal_closed`
+- `retry_with_new_bet`
+- `pivot_required`
+- `blocked_external`
+- `blocked_approval`
+
+Rules:
+- narrowed problem scope is input to the next bet, not a completion condition
+- local oracle success (build/test/deploy) does not override the final oracle
+- if the same branch yields no meaningful new evidence for two consecutive rounds, pivot automatically and inform Boss
 
 ## Step 6) Noise isolation rule (subagent to protect context)
 

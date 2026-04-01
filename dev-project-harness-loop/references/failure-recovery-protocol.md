@@ -189,9 +189,20 @@ Step 3: Decision
 After each bounded bet:
 
 1. Run oracle (L0 → L1 → L2)
-2. If fail → Apply recovery protocol
-3. If recover → Update `features.json`, continue
-4. If escalate → Update `harness/escalations/<id>.md`, pause this task, work on other tasks
+2. Compare evidence delta versus the previous round on the same branch
+3. If fail but a next bounded repair step is clear → continue (`retry_with_new_bet`)
+4. If two consecutive rounds on the same branch produce no meaningful new evidence → pivot strategy automatically (`pivot_required`) and notify Boss
+5. If recover → Update `features.json`, continue
+6. If escalate → Update `harness/escalations/<id>.md`, pause this task, work on other tasks
+
+### Continue Gate Rule (v5 preview)
+A narrowed blocker is not a valid stopping condition by itself.
+Only stop when one of the following is true:
+- final oracle passed
+- approval boundary reached
+- external blocker reached
+
+Otherwise, continue or pivot.
 
 ---
 

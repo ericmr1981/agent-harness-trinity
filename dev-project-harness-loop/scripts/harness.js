@@ -151,7 +151,7 @@ async function main() {
 
   // Step 7: Dispatch
   if (!DRY_RUN) {
-    await dispatchSprints(plan);
+    await dispatchSprints(plan, contextPackagePath);
     await updateActive(project, taskDescription, plan);
   }
 
@@ -159,8 +159,9 @@ async function main() {
   const masterConfig = {
     project, taskDescription, llmResult, plan, complexity,
     tokenTrack,
+    continueGate: plan.continueGate,
     dispatchTime: new Date().toISOString(),
-    version: 'harness.js v4'
+    version: 'harness.js v5-preview'
   };
   await writeFile(path.join(WORKSPACE, '.harness-master.json'), JSON.stringify(masterConfig, null, 2));
 
@@ -711,6 +712,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
 
   // Determine attachment tier
   const tier = scoreToAttachmentTier(complexity);
+  const continueGate = deriveContinueGate(taskDescription, project, llmResult, scan, complexity);
   console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF only' : 'full 6-7 files'})`);
 
   if (llmResult?.isMultiAgent && llmResult.agentPlan?.length > 0) {
@@ -720,7 +722,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
         role: spec.role,
         scope: spec.scope,
         dependsOn: spec.dependsOn || [],
-        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints, matrixFlags, agent),
+        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints, matrixFlags, agent, continueGate),
         agent: selectAgentFromId(spec.role),
         attachmentTier: scoreToAttachmentTier(complexity)
       });
@@ -732,14 +734,14 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       role: spec.role,
       scope: spec.scope,
       dependsOn: [],
-      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, [], matrixFlags, agent),
+      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, [], matrixFlags, agent, continueGate),
       agent,
       attachmentTier: tier
     });
   }
 
-  const masterBrief = buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity);
-  return { sprints, masterBrief, matrixFlags, attachmentTier: tier };
+  const masterBrief = buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate);
+  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate };
 }
 
 function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult) {
@@ -752,13 +754,23 @@ function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult) {
   return flags;
 }
 
-function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity) {
+function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate) {
   const flagSection = matrixFlags.length > 0
     ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}\n`
     : '';
 
+  const continueGateSection = continueGate ? `
+## Continue Gate (v5 preview)
+- **Final Oracle**: ${continueGate.finalOracle}
+- **Current Blocker**: ${continueGate.currentBlocker}
+- **Round Outcome**: ${continueGate.roundOutcome}
+- **Stop Allowed**: ${continueGate.stopAllowed}
+- **Next Forced Bet**: ${continueGate.nextForcedBet}
+- **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
+` : '';
+
   const brief = `# Architectural Brief — ${project.displayName}
-> harness.js v4 | ${new Date().toISOString()}
+> harness.js v5-preview | ${new Date().toISOString()}
 > Mode: ${MODE_ARG} | Complexity: ${complexity}/10 | Profile: ${scoreToProfile(complexity)}
 
 ## 任务画像
@@ -767,7 +779,7 @@ function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexi
 - **风险**: ${llmResult?.taskProfile?.riskLevel || 'medium'}
 - **范围**: ${llmResult?.taskProfile?.scopeGuess || 'multi-file'}
 - **Agent**: ${agent.id} (confidence: ${agent.confidence}%)
-${flagSection}
+${flagSection}${continueGateSection}
 
 ## 架构要点
 ${llmResult?.enhancedBrief || '无 LLM 分析（minimal/keyword 模式）'}
@@ -782,12 +794,20 @@ ${scan.topFiles.slice(0, 10).map(f => `- \`${f.rel}\` (${f.lines}L)`).join('\n')
   return brief;
 }
 
-function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, matrixFlags, agent) {
-  const riskHigh = llmResult?.taskProfile?.riskLevel === 'high';
+function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, matrixFlags, agent, continueGate = null) {
   const acceptanceSection = scan ? `## 验收
 \`\`\`bash
 cd "${project.repoPath}" && ${scan.buildCmd} && ${scan.guardCmd}
 \`\`\`` : '## 验收\n请参考项目实际构建命令';
+
+  const continueGateSection = continueGate ? `
+## Continue Gate (v5 preview)
+- **Final Oracle**: ${continueGate.finalOracle}
+- **Current Blocker**: ${continueGate.currentBlocker}
+- **Stop Allowed**: ${continueGate.stopAllowed}
+- **Next Forced Bet**: ${continueGate.nextForcedBet}
+- **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
+` : '';
 
   return `# Sprint Contract — ${spec.sprintId}
 
@@ -799,7 +819,7 @@ ${project.displayName} | ${project.repoPath}
 
 ## Agent
 ${spec.role}
-${matrixFlags.length > 0 ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}` : ''}
+${matrixFlags.length > 0 ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}` : ''}${continueGateSection}
 
 ## 依赖
 ${spec.dependsOn.length === 0 ? '_无_' : spec.dependsOn.map(d => `- ${d}`).join('\n')}
@@ -811,6 +831,27 @@ ${llmResult?.enhancedBrief || ''}
 
 ---
 *Generated: ${new Date().toISOString()}*`;
+}
+
+function deriveContinueGate(taskDescription, project, llmResult, scan, complexity) {
+  const finalOracle = scan
+    ? `Live acceptance for \"${taskDescription}\" plus local oracle: ${scan.buildCmd} && ${scan.guardCmd}`
+    : `Human-visible final acceptance for \"${taskDescription}\"`;
+
+  const nextForcedBet = scan
+    ? `Execute one bounded bet, then run ${scan.buildCmd} and ${scan.guardCmd}; if final oracle still fails, record evidence delta and launch the next repair step.`
+    : 'Execute one bounded bet, verify against the real acceptance path, and if the final oracle still fails, record evidence delta and continue.';
+
+  return {
+    finalOracle,
+    currentBlocker: 'Not yet verified against final oracle. Replace with concrete blocker after the first failed live check.',
+    roundOutcome: 'retry_with_new_bet',
+    stopAllowed: 'no',
+    nextForcedBet,
+    evidenceDelta: 'pending-first-round',
+    pivotAfterNoEvidenceRounds: 2,
+    localOracle: scan ? `${scan.buildCmd} && ${scan.guardCmd}` : 'project-local verification command not yet discovered'
+  };
 }
 
 function selectAgentFromId(role) {
@@ -869,7 +910,7 @@ function buildAttachments(agent, sprintBriefPath, sprintContractPath, tier, cont
 // ─────────────────────────────────────────────────────────────
 // STEP 7: Dispatch (updated with selective attachments)
 // ─────────────────────────────────────────────────────────────
-async function dispatchSprints(plan) {
+async function dispatchSprints(plan, contextPackagePath = null) {
   const byId = {};
   plan.sprints.forEach(s => byId[s.sprintId] = s);
 
@@ -1015,9 +1056,19 @@ async function ensureWorkspaceIndex(project, taskDescription, plan, activeStatus
 async function updateActive(project, taskDescription, plan) {
   // Write ACTIVE.md inside the project's repo (per-project isolation)
   const projectActiveFile = path.join(project.repoPath, 'ACTIVE.md');
-  const { matrixFlags = [] } = plan;
+  const { matrixFlags = [], continueGate } = plan;
   const flagSummary = matrixFlags.length > 0
     ? `\n## Matrix Flags\n${matrixFlags.map(f => `- [${f.flag}] ${f.note}`).join('\n')}` : '';
+  const continueGateSummary = continueGate ? `
+## Continue Gate (v5 preview)
+- **Final Oracle**: ${continueGate.finalOracle}
+- **Current Blocker**: ${continueGate.currentBlocker}
+- **Round Outcome**: ${continueGate.roundOutcome}
+- **Stop Allowed**: ${continueGate.stopAllowed}
+- **Next Forced Bet**: ${continueGate.nextForcedBet}
+- **Evidence Delta**: ${continueGate.evidenceDelta}
+- **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
+` : '';
 
   const content = `# ACTIVE.md — Current WIP
 
@@ -1036,13 +1087,13 @@ async function updateActive(project, taskDescription, plan) {
 ${plan.sprints.map(s => {
   const sf = (s.matrixFlags || []).map(f => `[${f.flag}]`).join(' ');
   return `- **${s.sprintId}**: ${s.role} ${sf}| deps: ${s.dependsOn.join(', ') || 'none'} | attachments: ${s.attachmentTier}`;
-}).join('\n')}${flagSummary}
+}).join('\n')}${flagSummary}${continueGateSummary}
 
 ## Master Brief
 ${path.join(HARNESS_DIR, 'assignments')}/master-brief-${Date.now()}.md
 
 ## Version
-harness.js v4 | per-project ACTIVE.md | workspace index | ContextAssembler
+harness.js v5-preview | per-project ACTIVE.md | workspace index | ContextAssembler
 
 ---
 *Last updated: ${new Date().toISOString()}*
@@ -1062,13 +1113,13 @@ async function writePostTaskScaffold(masterConfig) {
   await mkdir(REPORTS_DIR, { recursive: true });
   const reportPath = path.join(REPORTS_DIR, `sprint-${masterConfig.plan.sprints[0]?.sprintId || 'report'}-report.md`);
 
-  const { project, plan, complexity, tokenTrack } = masterConfig;
+  const { project, plan, complexity, tokenTrack, continueGate } = masterConfig;
   const sprint = plan.sprints[0];
 
   const content = `# Sprint Post-Task Report
 
 > **Sprint**: ${sprint?.sprintId || 'unknown'}
-> **Generated by**: harness.js v4 (scaffold — fill after execution)
+> **Generated by**: harness.js v5-preview (scaffold — fill after execution)
 > **Mode**: ${MODE_ARG}
 > **Complexity**: ${complexity}/10 → ${scoreToProfile(complexity)}
 > **Attachment Tier**: ${plan.attachmentTier}
@@ -1085,6 +1136,20 @@ async function writePostTaskScaffold(masterConfig) {
 | Agent | ${sprint?.role} |
 | Dispatch Time | ${masterConfig.dispatchTime} |
 | Estimated Tokens (harness) | ~${tokenTrack?.estimatedTokens || 0} |
+
+---
+
+## §1.5 Continue Gate (v5 preview)
+
+| Field | Value |
+|------|-----|
+| Final Oracle | ${continueGate?.finalOracle || '⬜ fill'} |
+| Current Blocker | ${continueGate?.currentBlocker || '⬜ fill'} |
+| Round Outcome | ${continueGate?.roundOutcome || 'retry_with_new_bet'} |
+| Stop Allowed | ${continueGate?.stopAllowed || 'no'} |
+| Next Forced Bet | ${continueGate?.nextForcedBet || '⬜ fill'} |
+| Evidence Delta | ${continueGate?.evidenceDelta || 'pending-first-round'} |
+| Pivot Trigger | ${continueGate?.pivotAfterNoEvidenceRounds || 2} no-evidence rounds |
 
 ---
 
@@ -1111,6 +1176,7 @@ async function writePostTaskScaffold(masterConfig) {
 | Actual Duration | __ min |
 | Retry Count | __ |
 | Failure Type | none / L0 / L1 / L2 |
+| Round Outcome | goal_closed / retry_with_new_bet / pivot_required / blocked_external / blocked_approval |
 
 ### What was done
 ⬜ List completed items
@@ -1175,10 +1241,10 @@ async function writePostTaskScaffold(masterConfig) {
 // REPORT
 // ─────────────────────────────────────────────────────────────
 function printReport(project, taskDescription, llmResult, plan, complexity, tokenTrack) {
-  const { matrixFlags = [] } = plan;
+  const { matrixFlags = [], continueGate } = plan;
 
   console.log('\n' + '='.repeat(70));
-  console.log('📊 HARNESS TASK REPORT v4 — Token-Aware + Complexity-Scored');
+  console.log('📊 HARNESS TASK REPORT v5-preview — Continue Gate + Token-Aware');
   console.log('='.repeat(70));
   console.log(`Project:     ${project.displayName}`);
   console.log(`Task:        ${taskDescription}`);
@@ -1186,6 +1252,13 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
   console.log(`Complexity:  ${complexity}/10 → ${scoreToProfile(complexity)}`);
   console.log(`LLM Calls:   ${tokenTrack.llmCalls}`);
   console.log(`Est. Tokens: ~${tokenTrack.estimatedTokens + (tokenTrack.llmCalls * 2500) + (tokenTrack.subagentEstimate * 3000)} (harness.js only)`);
+
+  if (continueGate) {
+    console.log(`Final Oracle: ${continueGate.finalOracle}`);
+    console.log(`Round Outcome: ${continueGate.roundOutcome} | Stop Allowed: ${continueGate.stopAllowed}`);
+    console.log(`Next Forced Bet: ${continueGate.nextForcedBet}`);
+    console.log(`Pivot Trigger: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch`);
+  }
 
   if (llmResult?.taskProfile) {
     console.log(`LLM Profile: ${llmResult.taskProfile.taskType} | risk: ${llmResult.taskProfile.riskLevel} | scope: ${llmResult.taskProfile.scopeGuess}`);
@@ -1207,9 +1280,10 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
   });
 
   console.log('\n' + '='.repeat(70));
-  console.log('\n✅ harness.js v4 complete');
+  console.log('\n✅ harness.js v5-preview complete');
   console.log('   ACTIVE.md written to project repo (per-project isolation)');
   console.log('   Workspace index updated: WORKSPACE.md');
+  console.log('   Continue gate scaffolded: finalOracle / roundOutcome / nextForcedBet');
   console.log('   Next: confirm with Boss → sessions_spawn dispatch');
   console.log('   After sprint: fill → harness/reports/sprint-*-report.md');
   console.log('');

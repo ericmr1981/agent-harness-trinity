@@ -6,22 +6,25 @@
 - **Name**: OpenClaw + agent-harness-trinity 升级路线图
 - **Repo**: /Users/ericmr/Documents/GitHub/agent-harness-trinity
 - **Record root**: /Users/ericmr/Documents/GitHub/Obsidian/项目/OpenClaw-Trinity-Project-OS
-- **Task**: 将本次 continue-gate / pivot 纠偏整理为 Trinity 的 **v5 版本设计稿**，明确 harness-dispatch 与 dev-project-harness-loop 的新停止/续跑规则
-- **Mode**: planning
+- **Task**: 将本次 continue-gate / pivot 纠偏推进为 Trinity 的 **v5-preview 实现**，把 round outcome / continue gate 字段落到 harness.js 与模板
+- **Mode**: implementation
 - **Status**: active
-- **Next bet**: 把 v5 设计稿从参考文档升级到脚本/模板变更清单，明确哪些字段和 roundOutcome 要进入 harness.js
+- **Next bet**: 继续把 v5-preview 从 scaffold 推到真实执行闭环：evidence delta 记录、两轮无新证据自动 pivot、blocked_external / blocked_approval 的真实判定
 - **Oracle**:
-  1. repo 内存在明确的 v5 设计入口
-  2. README 可直接指向 v5 设计
-  3. harness-dispatch / dev-project-harness-loop 都能定位到 v5 continue-gate 方案
+  1. `harness.js` 产出 continue-gate 字段
+  2. ACTIVE/report/contract 模板包含 finalOracle / roundOutcome / nextForcedBet
+  3. dry-run smoke test 能跑通 v5-preview scaffold
 - **Evidence**:
-  - `skills/harness-dispatch/references/v5-continue-gate.md`
-  - `dev-project-harness-loop/references/v5-continue-gate.md`
-  - README 已新增版本轨道说明
+  - `dev-project-harness-loop/scripts/harness.js`
+  - `dev-project-harness-loop/references/assignment-header.md`
+  - `dev-project-harness-loop/references/failure-recovery-protocol.md`
+  - `skills/harness-dispatch/SKILL.md`
+  - `node dev-project-harness-loop/scripts/harness.js --mode minimal --dry-run "v5 continue gate smoke test"`
 
 ## Version
 - Stable baseline: harness.js v4
-- New version track: v5 Continue Gate + Pivot (design draft)
+- New version track: v5 Continue Gate + Pivot
+- Current implementation state: v5-preview scaffold landed
 
 ---
-*Last updated: 2026-04-01 22:45 GMT+8*
+*Last updated: 2026-04-01 23:01 GMT+8*
