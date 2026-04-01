@@ -9,6 +9,8 @@ This is the **project operating system**:
 - `dev-project-autoloop` (bounded execution loop)
 - `project-harness-guards` (scaffolding + drift/change guards)
 
+> Next version track: **v5 Goal-Closed Continue Gate** (design draft) — see `references/v5-continue-gate.md`
+
 ## Non-negotiable rules
 
 No harness evidence → no acceptance claim.

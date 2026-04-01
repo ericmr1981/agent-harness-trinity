@@ -46,6 +46,15 @@
 - **验证优于乐观**。Builder 不能自我验收。
 - **Subagent 是执行者，不是自治者**。主 agent 拥有最终验证、守卫、commit 权限和持久记录。
 
+## 三点五、版本轨道
+
+- **当前稳定基线**：`harness.js v4`
+- **下一版本设计稿**：`v5 Continue Gate + Pivot`
+- **v5 目标**：堵住“最终 oracle 未通过但先进入汇报模式”的侧门；失败后默认继续修复，连续两轮无新证据时自动换策略并告知 Boss。
+- 设计入口：
+  - `skills/harness-dispatch/references/v5-continue-gate.md`
+  - `dev-project-harness-loop/references/v5-continue-gate.md`
+
 ---
 
 ## 四、快速开始

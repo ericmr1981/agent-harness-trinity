@@ -3,6 +3,8 @@
 **Enforcement layer: ALL subagent dispatches MUST route through here.**
 
 > harness.js v4.0 | agent-harness-trinity
+>
+> Next version track: **v5 Continue Gate + Pivot** (design draft) — see `references/v5-continue-gate.md`
 
 ---
 
