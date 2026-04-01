@@ -187,6 +187,8 @@ Rules:
 - narrowed problem scope is input to the next bet, not a completion condition
 - local oracle success (build/test/deploy) does not override the final oracle
 - if the same branch yields no meaningful new evidence for two consecutive rounds, pivot automatically and inform Boss
+- when a round result is known, backfill it into harness artifacts rather than leaving the report as a placeholder (`--consume-result`, `--goal-closed`, etc.)
+- store harness-owned continue-gate state under `harness/artifacts/continue-gate/`; project-level noisy logs still belong under root `artifacts/`
 
 ## Step 6) Noise isolation rule (subagent to protect context)
 

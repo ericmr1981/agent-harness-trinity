@@ -123,6 +123,10 @@ const effectiveMode = (channel === "telegram") ? "run" : "session";
 - `pivot_required`：同一路径连续两轮没有新的有效证据，自动换策略并告知 Boss
 - `blocked_external` / `blocked_approval`：只有遇到外部阻塞或审批边界才允许停
 
+成功闭环时，必须显式记录：
+- `goal_closed`：最终 oracle 已通过，可以停
+- 通过 `--consume-result` / `--goal-closed` 把结果回灌到 `ACTIVE.md`、`harness/reports/`、`harness/artifacts/continue-gate/*.json`
+
 **不是完成条件的信号：**
 - build/test 通过
 - 问题已收敛
@@ -157,7 +161,8 @@ const effectiveMode = (channel === "telegram") ? "run" : "session";
 | Complexity scoring | LLM-only | main agent pre-computes |
 | Agent selection | keyword + LLM suggestion | decision tree + LLM |
 | Token tracking | none | harness.js tracks estimates |
-| Post-task report | none | harness/reports/sprint-*-report.md |
+| Post-task report | none | harness/reports/sprint-*-report.md + `--consume-result` backfill |
+| Continue-gate state | none | harness/artifacts/continue-gate/*.json |
 | Templates | TEMPLATE_ASSIGN + TEMPLATE_HANDOFF | TEMPLATE_BRIEF（合并）|
 
 ---
@@ -168,6 +173,7 @@ const effectiveMode = (channel === "telegram") ? "run" : "session";
 |------|------|
 | harness.js | `dev-project-harness-loop/scripts/harness.js` |
 | Post-task report | `harness/reports/sprint-<id>-report.md` |
+| Continue-gate state artifact | `harness/artifacts/continue-gate/<id>.json` |
 | Master brief | `harness/assignments/master-brief-<ts>.md` |
 | Sprint contracts | `harness/contracts/sprint-*.md` |
 | Sprint spawn configs | `.harness-spawn-sprint-<id>.json` |
@@ -183,7 +189,7 @@ const effectiveMode = (channel === "telegram") ? "run" : "session";
 - [x] Selective attachments (0 / 2 / 5-6 files)
 - [x] TEMPLATE_BRIEF.md merges assignment + handoff
 - [x] Token tracking in .harness-master.json
-- [x] Post-task report scaffold generated
+- [x] Post-task report scaffold generated + `--consume-result` backfill path documented
 - [x] Agency agent decision tree (action × target matrix)
 - [x] Formal failure recovery (L0/L1/L2, max 2 retries)
 - [x] ACTIVE.md updated with mode + attachment tier

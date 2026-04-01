@@ -1,6 +1,6 @@
 # dev-project-harness-loop v5 — Goal-Closed Continue Gate
 
-Status: v5-preview partially implemented (runtime fields + pivot trigger landed; full closure still pending)
+Status: v5-preview implemented in runtime (goal_closed input/backfill, report result consumption, continue-gate state artifacts)
 
 ## Problem
 A long-running project can still fail if the loop switches from execution mode to report mode after only narrowing the blocker.
@@ -55,6 +55,9 @@ ACTIVE/report/handoff templates should gain:
 - `Next Forced Bet`
 - `Pivot Trigger`
 - `Last Evidence`
+- `Local Oracle`
+- `Result Consumed At`
+- `harness/artifacts/continue-gate/<sprint>.json` state snapshot
 
 ## Expected effect
 The loop becomes goal-closed in practice, not just in rhetoric. “Problem narrowed” no longer behaves like a hidden stop condition.

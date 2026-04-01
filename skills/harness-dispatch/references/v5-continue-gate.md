@@ -1,6 +1,6 @@
 # harness-dispatch v5 — Continue Gate + Pivot Design
 
-Status: v5-preview partially implemented (runtime fields + pivot trigger landed; full closure still pending)
+Status: v5-preview implemented in runtime (goal_closed input/backfill, report result consumption, continue-gate state artifacts)
 
 ## Goal
 Prevent the harness from exiting into progress-report mode when the final acceptance oracle still fails and no true blocker exists.
@@ -44,13 +44,16 @@ The planner should compare each round against the previous round and ask:
 If the answer is no for two rounds in a row on the same branch, pivot.
 
 ## Required output fields
-Future harness outputs should include:
+Harness outputs should include:
 - `finalOracle`
+- `localOracle`
 - `currentBlocker`
 - `roundOutcome`
 - `stopAllowed`
 - `nextForcedBet`
 - `evidenceDelta`
+- `lastEvidence`
+- `resultConsumedAt`
 - `pivotAfterNoEvidenceRounds`
 
 ## Expected effect

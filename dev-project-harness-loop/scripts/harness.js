@@ -29,6 +29,8 @@ const __dirname = path.dirname(__filename);
 const WORKSPACE      = process.env.OPENCLAW_WORKSPACE || process.cwd();
 const HARNESS_DIR    = path.join(WORKSPACE, 'harness');
 const REPORTS_DIR    = path.join(HARNESS_DIR, 'reports');
+const HARNESS_ARTIFACTS_DIR = path.join(HARNESS_DIR, 'artifacts');
+const CONTINUE_GATE_ARTIFACTS_DIR = path.join(HARNESS_ARTIFACTS_DIR, 'continue-gate');
 const WORKSPACE_ROOT = WORKSPACE;                                          // workspace root (parent of all project repos)
 const WORKSPACE_INDEX = path.join(WORKSPACE_ROOT, 'WORKSPACE.md');         // project index (not content)
 const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');                 // legacy tasks index
@@ -42,16 +44,34 @@ const rawArgs = process.argv.slice(2);
 const MODE_ARG    = extractArg('--mode', rawArgs) || 'llm';           // default: full LLM
 const COMPLEXITY  = parseInt(extractArg('--complexity', rawArgs) || '0'); // 0 = auto
 const DRY_RUN     = rawArgs.includes('--dry-run');
+const CONSUME_RESULT = rawArgs.includes('--consume-result');
+const GOAL_CLOSED = rawArgs.includes('--goal-closed');
 const BLOCKED_EXTERNAL = rawArgs.includes('--blocked-external');
 const BLOCKED_APPROVAL = rawArgs.includes('--blocked-approval');
 const RESULT_STATUS = extractArg('--result-status', rawArgs) || '';
 const FAILURE_TYPE = extractArg('--failure-type', rawArgs) || '';
 const EVIDENCE_ARTIFACT = extractArg('--evidence-artifact', rawArgs) || '';
-const TASK_ARGS_CLEAN = stripFlagValues(rawArgs, new Set(['--mode', '--complexity', '--result-status', '--failure-type', '--evidence-artifact']));
+const FINAL_ORACLE_INPUT = extractArg('--final-oracle', rawArgs) || '';
+const LOCAL_ORACLE_INPUT = extractArg('--local-oracle', rawArgs) || '';
+const CURRENT_BLOCKER_INPUT = extractArg('--current-blocker', rawArgs) || '';
+const NEXT_FORCED_BET_INPUT = extractArg('--next-forced-bet', rawArgs) || '';
+const LAST_EVIDENCE_INPUT = extractArg('--last-evidence', rawArgs) || '';
+const EVIDENCE_DELTA_INPUT = extractArg('--evidence-delta', rawArgs) || '';
+const ACTUAL_DURATION_MIN = extractArg('--actual-duration-min', rawArgs) || '';
+const RETRY_COUNT = extractArg('--retry-count', rawArgs) || '';
+const WHAT_WAS_DONE = extractArg('--what-was-done', rawArgs) || '';
+const WHAT_WAS_NOT_DONE = extractArg('--what-was-not-done', rawArgs) || '';
+const VERIFICATION_EVIDENCE = extractArg('--verification-evidence', rawArgs) || '';
+const TASK_ARGS_CLEAN = stripFlagValues(rawArgs, new Set([
+  '--mode', '--complexity', '--result-status', '--failure-type', '--evidence-artifact',
+  '--final-oracle', '--local-oracle', '--current-blocker', '--next-forced-bet', '--last-evidence',
+  '--evidence-delta', '--actual-duration-min', '--retry-count', '--what-was-done', '--what-was-not-done',
+  '--verification-evidence'
+]));
 const taskDescriptionClean = TASK_ARGS_CLEAN.join(' ') || '';
 
 if (!taskDescriptionClean) {
-  console.error('❌ Usage: /harness [flags] <task description>\n   Flags: --mode <minimal|keyword|llm|llm-full> --complexity <0-10> --no-preflight --dry-run');
+  console.error('❌ Usage: /harness [flags] <task description>\n   Flags: --mode <minimal|keyword|llm|llm-full> --complexity <0-10> --no-preflight --dry-run --consume-result --goal-closed');
   process.exit(1);
 }
 
@@ -157,24 +177,38 @@ async function main() {
   // Step 6: Sprint plan
   const plan = await generateSprintPlan(taskDescriptionClean, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig);
 
-  // Step 7: Dispatch
-  if (!DRY_RUN) {
+  // Step 7: Dispatch (skip when only consuming result/backfill)
+  if (!DRY_RUN && !CONSUME_RESULT) {
     await dispatchSprints(plan, contextPackagePath);
-    await updateActive(project, taskDescription, plan);
+  }
+  if (!DRY_RUN) {
+    await updateActive(project, taskDescriptionClean, plan);
   }
 
   // Step 8: Write master + report
+  const dispatchTime = CONSUME_RESULT
+    ? (previousMasterConfig?.dispatchTime || new Date().toISOString())
+    : new Date().toISOString();
   const masterConfig = {
     project, taskDescription: taskDescriptionClean, llmResult, plan, complexity,
     tokenTrack,
     continueGate: plan.continueGate,
-    dispatchTime: new Date().toISOString(),
+    executionResult: plan.executionResult,
+    dispatchTime,
+    lifecycle: {
+      mode: CONSUME_RESULT ? 'result-consumed' : 'dispatch',
+      consumedResult: CONSUME_RESULT,
+      goalClosed: GOAL_CLOSED
+    },
     version: 'harness.js v5-preview'
   };
-  await writeFile(MASTER_CONFIG_FILE, JSON.stringify(masterConfig, null, 2));
+  if (!DRY_RUN) {
+    await writeFile(MASTER_CONFIG_FILE, JSON.stringify(masterConfig, null, 2));
 
-  // Step 9: Generate post-task report (scaffold — actual run data filled by main agent after execution)
-  await writePostTaskScaffold(masterConfig);
+    // Step 9: Write report + state artifact
+    await writeContinueGateArtifact(masterConfig);
+    await writePostTaskReport(masterConfig);
+  }
 
   printReport(project, taskDescriptionClean, llmResult, plan, complexity, tokenTrack);
 }
@@ -376,12 +410,32 @@ async function scanRepo(repoPath) {
 
   let guardCmd = 'unknown';
   try {
-    if (execSync(`test -f "${repoPath}/scripts/run_change_guard.sh" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
-      guardCmd = 'bash scripts/run_change_guard.sh';
+    const rootGuardExists = execSync(`bash -lc 'test -f "${repoPath}/scripts/run_change_guard.sh" && echo yes || true'`, { encoding: 'utf8' }).includes('yes');
+    const bundledGuardExists = execSync(`bash -lc 'test -f "${repoPath}/project-harness-guards/scripts/run_change_guard.sh" && echo yes || true'`, { encoding: 'utf8' }).includes('yes');
+    if (rootGuardExists) guardCmd = 'bash scripts/run_change_guard.sh';
+    else if (bundledGuardExists) guardCmd = 'bash project-harness-guards/scripts/run_change_guard.sh .';
+  } catch (_) {}
+
+  let localOracle = composeLocalOracle({ repoPath, buildCmd, testCmd, guardCmd });
+  try {
+    const trinityGuardExists = execSync(`bash -lc 'test -f "${repoPath}/scripts/run_trinity_guard.sh" && echo yes || true'`, { encoding: 'utf8' }).includes('yes');
+    if (trinityGuardExists) {
+      localOracle = 'bash scripts/run_trinity_guard.sh';
+      if (guardCmd === 'unknown') guardCmd = localOracle;
     }
   } catch (_) {}
 
-  return { repoPath, codebaseType, framework, srcFiles, topFiles, buildCmd, testCmd, guardCmd };
+  return { repoPath, codebaseType, framework, srcFiles, topFiles, buildCmd, testCmd, guardCmd, localOracle };
+}
+
+function composeLocalOracle(scan) {
+  const commands = [scan?.buildCmd, scan?.testCmd, scan?.guardCmd]
+    .filter(Boolean)
+    .filter(cmd => cmd !== 'unknown' && cmd !== 'none');
+  const uniqueCommands = [...new Set(commands)];
+  return uniqueCommands.length > 0
+    ? uniqueCommands.join(' && ')
+    : 'project-local verification command not yet discovered';
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -720,7 +774,8 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
 
   // Determine attachment tier
   const tier = scoreToAttachmentTier(complexity);
-  const continueGate = deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig);
+  const executionResult = deriveExecutionResult(previousMasterConfig);
+  const continueGate = deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig, executionResult);
   console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF only' : 'full 6-7 files'})`);
 
   if (llmResult?.isMultiAgent && llmResult.agentPlan?.length > 0) {
@@ -749,7 +804,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
   }
 
   const masterBrief = buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate);
-  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate };
+  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult };
 }
 
 function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult) {
@@ -774,6 +829,9 @@ function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexi
 - **Round Outcome**: ${continueGate.roundOutcome}
 - **Stop Allowed**: ${continueGate.stopAllowed}
 - **Next Forced Bet**: ${continueGate.nextForcedBet}
+- **Local Oracle**: ${continueGate.localOracle}
+- **Evidence Delta**: ${continueGate.evidenceDelta}
+- **Last Evidence**: ${continueGate.lastEvidence || 'none yet'}
 - **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
 ` : '';
 
@@ -795,6 +853,7 @@ ${llmResult?.enhancedBrief || '无 LLM 分析（minimal/keyword 模式）'}
 ${scan ? `## 代码库
 - **类型**: ${scan.codebaseType} | **框架**: ${scan.framework}
 - **构建**: \`${scan.buildCmd}\` | **测试**: \`${scan.testCmd}\` | **Guard**: \`${scan.guardCmd}\`
+- **Local Oracle**: \`${continueGate?.localOracle || scan.localOracle || 'project-local verification command not yet discovered'}\`
 
 ## 主要文件
 ${scan.topFiles.slice(0, 10).map(f => `- \`${f.rel}\` (${f.lines}L)`).join('\n')}
@@ -803,18 +862,23 @@ ${scan.topFiles.slice(0, 10).map(f => `- \`${f.rel}\` (${f.lines}L)`).join('\n')
 }
 
 function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, matrixFlags, agent, continueGate = null) {
+  const localOracle = continueGate?.localOracle || scan?.localOracle || '请参考项目实际构建命令';
   const acceptanceSection = scan ? `## 验收
 \`\`\`bash
-cd "${project.repoPath}" && ${scan.buildCmd} && ${scan.guardCmd}
+cd "${project.repoPath}" && ${localOracle}
 \`\`\`` : '## 验收\n请参考项目实际构建命令';
 
   const continueGateSection = continueGate ? `
 ## Continue Gate (v5 preview)
 - **Final Oracle**: ${continueGate.finalOracle}
 - **Current Blocker**: ${continueGate.currentBlocker}
+- **Round Outcome**: ${continueGate.roundOutcome}
 - **Stop Allowed**: ${continueGate.stopAllowed}
 - **Next Forced Bet**: ${continueGate.nextForcedBet}
+- **Local Oracle**: ${continueGate.localOracle}
+- **Evidence Delta**: ${continueGate.evidenceDelta}
 - **No-Evidence Rounds**: ${continueGate.noEvidenceRounds}
+- **Last Evidence**: ${continueGate.lastEvidence || 'none yet'}
 - **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
 ` : '';
 
@@ -855,6 +919,68 @@ function normalizeTaskText(text = '') {
   return String(text).trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function hasMeaningfulText(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  const placeholderFragments = [
+    'unknown && unknown',
+    'run unknown and unknown',
+    'project-local verification command not yet discovered',
+    'Not yet verified against final oracle',
+    '⬜ fill'
+  ];
+  return !placeholderFragments.some(fragment => text.includes(fragment));
+}
+
+function parseOptionalInteger(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const parsed = parseInt(String(value), 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function hasExplicitResultInput() {
+  return [
+    CONSUME_RESULT,
+    GOAL_CLOSED,
+    BLOCKED_EXTERNAL,
+    BLOCKED_APPROVAL,
+    RESULT_STATUS,
+    FAILURE_TYPE,
+    EVIDENCE_ARTIFACT,
+    FINAL_ORACLE_INPUT,
+    LOCAL_ORACLE_INPUT,
+    CURRENT_BLOCKER_INPUT,
+    NEXT_FORCED_BET_INPUT,
+    LAST_EVIDENCE_INPUT,
+    EVIDENCE_DELTA_INPUT,
+    ACTUAL_DURATION_MIN,
+    RETRY_COUNT,
+    WHAT_WAS_DONE,
+    WHAT_WAS_NOT_DONE,
+    VERIFICATION_EVIDENCE
+  ].some(Boolean);
+}
+
+function normalizeEvidenceArtifactPath(rawArtifact = '', repoPath = WORKSPACE) {
+  const raw = String(rawArtifact || '').trim();
+  if (!raw) return '';
+
+  const normalized = raw.replace(/^\.\//, '');
+  if (normalized.startsWith('harness/artifacts/') || normalized.startsWith('artifacts/')) return normalized;
+
+  if (path.isAbsolute(normalized)) {
+    const rel = path.relative(repoPath, normalized).replace(/\\/g, '/');
+    if (!rel.startsWith('..')) return rel;
+    return normalized;
+  }
+
+  if (!normalized.includes('/')) {
+    return `harness/artifacts/${normalized}`;
+  }
+
+  return normalized;
+}
+
 function buildBranchKey(project, taskDescription) {
   return `${project.repoPath}::${normalizeTaskText(taskDescription)}`;
 }
@@ -868,26 +994,57 @@ function deriveEvidenceFingerprint(taskDescription, llmResult, scan, complexity)
     scopeGuess: llmResult?.taskProfile?.scopeGuess || 'unknown',
     buildCmd: scan?.buildCmd || null,
     guardCmd: scan?.guardCmd || null,
+    localOracle: scan?.localOracle || null,
     topFiles: (scan?.topFiles || []).slice(0, 5).map(f => f.rel)
   });
 }
 
-function deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig = null) {
+function deriveExecutionResult(previousMasterConfig = null) {
+  const previous = previousMasterConfig?.executionResult || {};
+  const consumedAt = hasExplicitResultInput() ? new Date().toISOString() : (previous.consumedAt || '');
+
+  return {
+    status: RESULT_STATUS || previous.status || '',
+    failureType: FAILURE_TYPE || previous.failureType || '',
+    actualDurationMin: parseOptionalInteger(ACTUAL_DURATION_MIN) ?? previous.actualDurationMin ?? null,
+    retryCount: parseOptionalInteger(RETRY_COUNT) ?? previous.retryCount ?? null,
+    whatWasDone: WHAT_WAS_DONE || previous.whatWasDone || '',
+    whatWasNotDone: WHAT_WAS_NOT_DONE || previous.whatWasNotDone || '',
+    verificationEvidence: VERIFICATION_EVIDENCE || previous.verificationEvidence || '',
+    consumedAt,
+    consumedFrom: CONSUME_RESULT ? 'cli-backfill' : (previous.consumedFrom || '')
+  };
+}
+
+function deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig = null, executionResult = null) {
+  const previousContinueGate = previousMasterConfig?.continueGate || {};
   const branchKey = buildBranchKey(project, taskDescription);
   const evidenceFingerprint = deriveEvidenceFingerprint(taskDescription, llmResult, scan, complexity);
-  const previousBranchKey = previousMasterConfig?.continueGate?.branchKey || null;
-  const previousFingerprint = previousMasterConfig?.continueGate?.evidenceFingerprint || null;
+  const previousBranchKey = previousContinueGate.branchKey || null;
+  const previousFingerprint = previousContinueGate.evidenceFingerprint || null;
   const sameBranch = previousBranchKey === branchKey;
+  const explicitResultInput = hasExplicitResultInput();
 
   let evidenceDelta = 'pending-first-round';
   let noEvidenceRounds = 0;
 
-  if (!previousMasterConfig || !sameBranch) {
+  if (EVIDENCE_DELTA_INPUT) {
+    evidenceDelta = EVIDENCE_DELTA_INPUT;
+    noEvidenceRounds = evidenceDelta === 'none'
+      ? (sameBranch ? (previousContinueGate.noEvidenceRounds || 0) : 0)
+      : 0;
+  } else if (GOAL_CLOSED) {
+    evidenceDelta = 'changed';
+    noEvidenceRounds = 0;
+  } else if (!previousMasterConfig || !sameBranch) {
     evidenceDelta = 'new-branch';
     noEvidenceRounds = 0;
+  } else if (explicitResultInput) {
+    evidenceDelta = previousContinueGate.evidenceDelta || 'changed';
+    noEvidenceRounds = previousContinueGate.noEvidenceRounds || 0;
   } else if (previousFingerprint === evidenceFingerprint) {
     evidenceDelta = 'none';
-    noEvidenceRounds = (previousMasterConfig?.continueGate?.noEvidenceRounds || 0) + 1;
+    noEvidenceRounds = (previousContinueGate.noEvidenceRounds || 0) + 1;
   } else {
     evidenceDelta = 'changed';
     noEvidenceRounds = 0;
@@ -895,44 +1052,84 @@ function deriveContinueGate(taskDescription, project, llmResult, scan, complexit
 
   const pivotAfterNoEvidenceRounds = 2;
   let roundOutcome = noEvidenceRounds >= pivotAfterNoEvidenceRounds ? 'pivot_required' : 'retry_with_new_bet';
-  const finalOracle = scan
-    ? `Live acceptance for \"${taskDescription}\" plus local oracle: ${scan.buildCmd} && ${scan.guardCmd}`
-    : `Human-visible final acceptance for \"${taskDescription}\"`;
-
+  if (!explicitResultInput && sameBranch && previousContinueGate.roundOutcome === 'goal_closed') {
+    roundOutcome = 'goal_closed';
+    evidenceDelta = previousContinueGate.evidenceDelta || evidenceDelta;
+    noEvidenceRounds = 0;
+  }
+  if (GOAL_CLOSED) roundOutcome = 'goal_closed';
   if (BLOCKED_APPROVAL) roundOutcome = 'blocked_approval';
   if (BLOCKED_EXTERNAL) roundOutcome = 'blocked_external';
 
-  const nextForcedBet = roundOutcome === 'pivot_required'
-    ? 'Change branch/approach now, inform Boss of the pivot, and continue without waiting for confirmation unless a new approval boundary appears.'
-    : roundOutcome === 'blocked_approval'
-      ? 'Pause execution at the approval boundary, notify Boss with the exact action awaiting approval, and resume after approval.'
-      : roundOutcome === 'blocked_external'
-        ? 'Record the external blocker with evidence, notify Boss, and switch to another executable branch or wait for the dependency to recover.'
-        : (scan
-          ? `Execute one bounded bet, then run ${scan.buildCmd} and ${scan.guardCmd}; if final oracle still fails, record evidence delta and launch the next repair step.`
-          : 'Execute one bounded bet, verify against the real acceptance path, and if the final oracle still fails, record evidence delta and continue.');
+  const previousLocalOracle = hasMeaningfulText(previousContinueGate.localOracle) ? previousContinueGate.localOracle : '';
+  const previousFinalOracle = hasMeaningfulText(previousContinueGate.finalOracle) ? previousContinueGate.finalOracle : '';
+  const previousCurrentBlocker = hasMeaningfulText(previousContinueGate.currentBlocker) ? previousContinueGate.currentBlocker : '';
+  const previousNextForcedBet = hasMeaningfulText(previousContinueGate.nextForcedBet) ? previousContinueGate.nextForcedBet : '';
+
+  const localOracle = LOCAL_ORACLE_INPUT
+    || previousLocalOracle
+    || scan?.localOracle
+    || composeLocalOracle(scan)
+    || 'project-local verification command not yet discovered';
+  const finalOracle = FINAL_ORACLE_INPUT
+    || previousFinalOracle
+    || `Live acceptance for \"${taskDescription}\" plus local oracle: ${localOracle}`;
+
+  const currentBlocker = CURRENT_BLOCKER_INPUT
+    || (roundOutcome === 'goal_closed'
+      ? 'None — final oracle passed and the task can stop.'
+      : roundOutcome === 'pivot_required'
+        ? 'Same branch produced no meaningful new evidence for two consecutive rounds; pivot required.'
+        : roundOutcome === 'blocked_approval'
+          ? 'Execution hit an approval boundary that requires Boss approval before continuing.'
+          : roundOutcome === 'blocked_external'
+            ? 'Execution is blocked by an external/platform/tooling dependency.'
+            : previousCurrentBlocker
+              || 'Not yet verified against final oracle. Replace with concrete blocker after the first failed live check.');
+
+  const nextForcedBet = NEXT_FORCED_BET_INPUT
+    || (roundOutcome === 'goal_closed'
+      ? 'None — record closure evidence, sync ACTIVE/report, and stop.'
+      : roundOutcome === 'pivot_required'
+        ? 'Change branch/approach now, inform Boss of the pivot, and continue without waiting for confirmation unless a new approval boundary appears.'
+        : roundOutcome === 'blocked_approval'
+          ? 'Pause execution at the approval boundary, notify Boss with the exact action awaiting approval, and resume after approval.'
+          : roundOutcome === 'blocked_external'
+            ? 'Record the external blocker with evidence, notify Boss, and switch to another executable branch or wait for the dependency to recover.'
+            : previousNextForcedBet
+              || (localOracle && localOracle !== 'project-local verification command not yet discovered'
+                ? `Execute one bounded bet, then run ${localOracle}; if final oracle still fails, record evidence delta and launch the next repair step.`
+                : 'Execute one bounded bet, verify against the real acceptance path, and if the final oracle still fails, record evidence delta and continue.'));
+
+  const evidenceArtifact = normalizeEvidenceArtifactPath(
+    EVIDENCE_ARTIFACT || previousContinueGate.evidenceArtifact || '',
+    project.repoPath
+  );
+  const resultStatus = (GOAL_CLOSED ? '✅ done' : (RESULT_STATUS || previousContinueGate.resultStatus || executionResult?.status || ''));
+  const failureType = FAILURE_TYPE || previousContinueGate.failureType || executionResult?.failureType || '';
+  const lastEvidence = LAST_EVIDENCE_INPUT
+    || (hasMeaningfulText(previousContinueGate.lastEvidence) ? previousContinueGate.lastEvidence : '')
+    || executionResult?.verificationEvidence
+    || (evidenceArtifact ? `Evidence recorded at ${evidenceArtifact}` : '');
 
   return {
     branchKey,
     evidenceFingerprint,
     finalOracle,
-    currentBlocker: roundOutcome === 'pivot_required'
-      ? 'Same branch produced no meaningful new evidence for two consecutive rounds; pivot required.'
-      : roundOutcome === 'blocked_approval'
-        ? 'Execution hit an approval boundary that requires Boss approval before continuing.'
-        : roundOutcome === 'blocked_external'
-          ? 'Execution is blocked by an external/platform/tooling dependency.'
-          : 'Not yet verified against final oracle. Replace with concrete blocker after the first failed live check.',
+    currentBlocker,
     roundOutcome,
-    stopAllowed: roundOutcome === 'blocked_approval' || roundOutcome === 'blocked_external' ? 'yes' : 'no',
+    stopAllowed: roundOutcome === 'goal_closed' || roundOutcome === 'blocked_approval' || roundOutcome === 'blocked_external' ? 'yes' : 'no',
     nextForcedBet,
     evidenceDelta,
     noEvidenceRounds,
     pivotAfterNoEvidenceRounds,
-    localOracle: scan ? `${scan.buildCmd} && ${scan.guardCmd}` : 'project-local verification command not yet discovered',
-    evidenceArtifact: EVIDENCE_ARTIFACT || '',
-    resultStatus: RESULT_STATUS || '',
-    failureType: FAILURE_TYPE || ''
+    localOracle,
+    evidenceArtifact,
+    resultStatus,
+    failureType,
+    lastEvidence,
+    resultConsumedAt: executionResult?.consumedAt || '',
+    explicitInputsApplied: explicitResultInput
   };
 }
 
@@ -1100,7 +1297,7 @@ async function ensureWorkspaceIndex(project, taskDescription, plan, activeStatus
     // No index yet — start fresh
     indexContent = `# WORKSPACE Index
 
-> Managed by harness.js v4 | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
+> Managed by harness.js v5-preview | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
 
 ## Active Projects
 | Project | ACTIVE.md Path | Status | Last Updated |
@@ -1122,7 +1319,7 @@ async function ensureWorkspaceIndex(project, taskDescription, plan, activeStatus
   const rows = entries.map(e => `| ${e.project} | \`${e.activePath}\` | ${e.status} | ${e.updated} |`).join('\n');
   const header = `# WORKSPACE Index
 
-> Managed by harness.js v4 | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
+> Managed by harness.js v5-preview | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
 
 ## Active Projects
 | Project | ACTIVE.md Path | Status | Last Updated |
@@ -1138,20 +1335,31 @@ async function ensureWorkspaceIndex(project, taskDescription, plan, activeStatus
 async function updateActive(project, taskDescription, plan) {
   // Write ACTIVE.md inside the project's repo (per-project isolation)
   const projectActiveFile = path.join(project.repoPath, 'ACTIVE.md');
-  const { matrixFlags = [], continueGate } = plan;
+  const { matrixFlags = [], continueGate, executionResult } = plan;
   const flagSummary = matrixFlags.length > 0
     ? `\n## Matrix Flags\n${matrixFlags.map(f => `- [${f.flag}] ${f.note}`).join('\n')}` : '';
   const continueGateSummary = continueGate ? `
 ## Continue Gate (v5 preview)
 - **Final Oracle**: ${continueGate.finalOracle}
+- **Local Oracle**: ${continueGate.localOracle}
 - **Current Blocker**: ${continueGate.currentBlocker}
 - **Round Outcome**: ${continueGate.roundOutcome}
 - **Stop Allowed**: ${continueGate.stopAllowed}
 - **Next Forced Bet**: ${continueGate.nextForcedBet}
 - **Evidence Delta**: ${continueGate.evidenceDelta}
 - **No-Evidence Rounds**: ${continueGate.noEvidenceRounds}
+- **Last Evidence**: ${continueGate.lastEvidence || 'none yet'}
+- **Evidence Artifact**: ${continueGate.evidenceArtifact || 'none'}
+- **Result Status**: ${continueGate.resultStatus || executionResult?.status || 'pending'}
 - **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
 ` : '';
+
+  const activeStatus = continueGate?.roundOutcome === 'goal_closed'
+    ? 'goal_closed'
+    : continueGate?.roundOutcome === 'blocked_approval' || continueGate?.roundOutcome === 'blocked_external'
+      ? 'blocked'
+      : 'running';
+  const masterBriefPath = path.join(HARNESS_DIR, 'assignments', `master-brief-${Date.now()}.md`);
 
   const content = `# ACTIVE.md — Current WIP
 
@@ -1163,7 +1371,7 @@ async function updateActive(project, taskDescription, plan) {
 - **Task**: ${taskDescription}
 - **Mode**: ${MODE_ARG}
 - **Started**: ${new Date().toISOString()}
-- **Status**: running
+- **Status**: ${activeStatus}
 - **Sprints**: ${plan.sprints.map(s => s.sprintId).join(', ')}
 
 ## Sprint Plan
@@ -1173,7 +1381,7 @@ ${plan.sprints.map(s => {
 }).join('\n')}${flagSummary}${continueGateSummary}
 
 ## Master Brief
-${path.join(HARNESS_DIR, 'assignments')}/master-brief-${Date.now()}.md
+${masterBriefPath}
 
 ## Version
 harness.js v5-preview | per-project ACTIVE.md | workspace index | ContextAssembler
@@ -1186,23 +1394,42 @@ harness.js v5-preview | per-project ACTIVE.md | workspace index | ContextAssembl
   console.log(`   ✅ ACTIVE.md written to project repo: ${projectActiveFile}`);
 
   // Update workspace root index
-  await ensureWorkspaceIndex(project, taskDescription, plan);
+  await ensureWorkspaceIndex(project, taskDescription, plan, activeStatus);
 }
 
 // ─────────────────────────────────────────────────────────────
-// POST-TASK REPORT SCAFFOLD (NEW in v4)
+// POST-TASK REPORT + CONTINUE-GATE ARTIFACTS
 // ─────────────────────────────────────────────────────────────
-async function writePostTaskScaffold(masterConfig) {
+async function writeContinueGateArtifact(masterConfig) {
+  await mkdir(CONTINUE_GATE_ARTIFACTS_DIR, { recursive: true });
+  const sprintId = masterConfig.plan.sprints[0]?.sprintId || 'report';
+  const artifactPath = path.join(CONTINUE_GATE_ARTIFACTS_DIR, `${sprintId}.json`);
+  const payload = {
+    sprintId,
+    taskDescription: masterConfig.taskDescription,
+    lifecycle: masterConfig.lifecycle,
+    continueGate: masterConfig.continueGate,
+    executionResult: masterConfig.executionResult,
+    updatedAt: new Date().toISOString()
+  };
+  await writeFile(artifactPath, JSON.stringify(payload, null, 2));
+  console.log(`\n🧾 Continue-gate artifact: ${artifactPath}`);
+}
+
+async function writePostTaskReport(masterConfig) {
   await mkdir(REPORTS_DIR, { recursive: true });
   const reportPath = path.join(REPORTS_DIR, `sprint-${masterConfig.plan.sprints[0]?.sprintId || 'report'}-report.md`);
 
-  const { project, plan, complexity, tokenTrack, continueGate } = masterConfig;
+  const { project, plan, complexity, tokenTrack, continueGate, executionResult, lifecycle } = masterConfig;
   const sprint = plan.sprints[0];
+  const statusHeading = lifecycle?.consumedResult
+    ? 'result-consumed'
+    : 'dispatch scaffold';
 
   const content = `# Sprint Post-Task Report
 
 > **Sprint**: ${sprint?.sprintId || 'unknown'}
-> **Generated by**: harness.js v5-preview (scaffold — fill after execution)
+> **Generated by**: harness.js v5-preview (${statusHeading})
 > **Mode**: ${MODE_ARG}
 > **Complexity**: ${complexity}/10 → ${scoreToProfile(complexity)}
 > **Attachment Tier**: ${plan.attachmentTier}
@@ -1227,14 +1454,17 @@ async function writePostTaskScaffold(masterConfig) {
 | Field | Value |
 |------|-----|
 | Final Oracle | ${continueGate?.finalOracle || '⬜ fill'} |
+| Local Oracle | ${continueGate?.localOracle || '⬜ fill'} |
 | Current Blocker | ${continueGate?.currentBlocker || '⬜ fill'} |
 | Round Outcome | ${continueGate?.roundOutcome || 'retry_with_new_bet'} |
 | Stop Allowed | ${continueGate?.stopAllowed || 'no'} |
 | Next Forced Bet | ${continueGate?.nextForcedBet || '⬜ fill'} |
 | Evidence Delta | ${continueGate?.evidenceDelta || 'pending-first-round'} |
 | No-Evidence Rounds | ${continueGate?.noEvidenceRounds || 0} |
+| Last Evidence | ${continueGate?.lastEvidence || '⬜ fill'} |
 | Evidence Artifact | ${continueGate?.evidenceArtifact || '⬜ fill'} |
 | Pivot Trigger | ${continueGate?.pivotAfterNoEvidenceRounds || 2} no-evidence rounds |
+| Result Consumed At | ${continueGate?.resultConsumedAt || executionResult?.consumedAt || '⬜ pending'} |
 
 ---
 
@@ -1247,27 +1477,25 @@ async function writePostTaskScaffold(masterConfig) {
 | Subagent tokens (est.) | ~${(tokenTrack?.subagentEstimate || 1) * 3000} |
 | **Total estimated** | **~${((tokenTrack?.llmCalls || 0) * 2500) + ((tokenTrack?.subagentEstimate || 1) * 3000)} tokens** |
 
-> ⬜ **Main agent: fill actual token usage after sprint completes** (from session_status)
+> ${lifecycle?.consumedResult ? 'Result fields were backfilled through --consume-result.' : 'Main agent may still add actual token usage after sprint completes (from session_status).'}
 
 ---
 
 ## §3 Execution Result
 
-> ⬜ **Fill after subagent completes**
-
 | Field | Value |
 |-------|-------|
-| Status | ${continueGate?.resultStatus || '🔴 not started / ⚠️ partial / ✅ done / 🔴 blocked'} |
-| Actual Duration | __ min |
-| Retry Count | __ |
-| Failure Type | ${continueGate?.failureType || 'none / L0 / L1 / L2'} |
+| Status | ${executionResult?.status || continueGate?.resultStatus || '🔴 not started / ⚠️ partial / ✅ done / 🔴 blocked'} |
+| Actual Duration | ${executionResult?.actualDurationMin ?? '__'} min |
+| Retry Count | ${executionResult?.retryCount ?? '__'} |
+| Failure Type | ${executionResult?.failureType || continueGate?.failureType || 'none / L0 / L1 / L2'} |
 | Round Outcome | ${continueGate?.roundOutcome || 'goal_closed / retry_with_new_bet / pivot_required / blocked_external / blocked_approval'} |
 
 ### What was done
-⬜ List completed items
+${executionResult?.whatWasDone || '⬜ List completed items'}
 
 ### What was NOT done
-⬜ List incomplete items
+${executionResult?.whatWasNotDone || '⬜ List incomplete items'}
 
 ---
 
@@ -1275,13 +1503,12 @@ async function writePostTaskScaffold(masterConfig) {
 
 | Check | Result |
 |-------|--------|
-| L0 (build) | ⬜ |
-| L1 (test) | ⬜ |
-| L2 (e2e/manual) | ⬜ |
-| Guard pass | ⬜ |
+| Local Oracle | ${continueGate?.localOracle || '⬜'} |
+| Final Oracle | ${continueGate?.roundOutcome === 'goal_closed' ? '✅ passed' : '⬜ verify / still pending'} |
+| Guard / evidence recorded | ${continueGate?.evidenceArtifact || executionResult?.verificationEvidence ? '✅' : '⬜'} |
 
 ### Verification evidence
-⬜ Paste command outputs / artifact paths
+${executionResult?.verificationEvidence || continueGate?.lastEvidence || '⬜ Paste command outputs / artifact paths'}
 
 ---
 
@@ -1316,17 +1543,17 @@ async function writePostTaskScaffold(masterConfig) {
 
 ---
 
-*Report version: scaffold v1 | Fill fields marked ⬜ after sprint execution*
+*Report version: v5-preview | continue-gate artifact: harness/artifacts/continue-gate/${sprint?.sprintId || 'report'}.json*
 `;
   await writeFile(reportPath, content);
-  console.log(`\n📊 Report scaffold: ${reportPath}`);
+  console.log(`\n📊 Report written: ${reportPath}`);
 }
 
 // ─────────────────────────────────────────────────────────────
 // REPORT
 // ─────────────────────────────────────────────────────────────
 function printReport(project, taskDescription, llmResult, plan, complexity, tokenTrack) {
-  const { matrixFlags = [], continueGate } = plan;
+  const { matrixFlags = [], continueGate, executionResult } = plan;
 
   console.log('\n' + '='.repeat(70));
   console.log('📊 HARNESS TASK REPORT v5-preview — Continue Gate + Token-Aware');
@@ -1340,13 +1567,19 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
 
   if (continueGate) {
     console.log(`Final Oracle: ${continueGate.finalOracle}`);
+    console.log(`Local Oracle: ${continueGate.localOracle}`);
     console.log(`Round Outcome: ${continueGate.roundOutcome} | Stop Allowed: ${continueGate.stopAllowed}`);
     console.log(`Next Forced Bet: ${continueGate.nextForcedBet}`);
     console.log(`Evidence Delta: ${continueGate.evidenceDelta} | No-Evidence Rounds: ${continueGate.noEvidenceRounds}`);
+    if (continueGate.lastEvidence) console.log(`Last Evidence: ${continueGate.lastEvidence}`);
     if (continueGate.evidenceArtifact) console.log(`Evidence Artifact: ${continueGate.evidenceArtifact}`);
     if (continueGate.failureType) console.log(`Failure Type: ${continueGate.failureType}`);
     if (continueGate.resultStatus) console.log(`Result Status: ${continueGate.resultStatus}`);
     console.log(`Pivot Trigger: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch`);
+  }
+
+  if (executionResult?.consumedAt) {
+    console.log(`Result Consumed: ${executionResult.consumedAt}`);
   }
 
   if (llmResult?.taskProfile) {
@@ -1369,12 +1602,14 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
   });
 
   console.log('\n' + '='.repeat(70));
-  console.log('\n✅ harness.js v5-preview complete');
+  console.log(`\n✅ harness.js v5-preview ${CONSUME_RESULT ? 'result consumption' : 'dispatch'} complete`);
   console.log('   ACTIVE.md written to project repo (per-project isolation)');
   console.log('   Workspace index updated: WORKSPACE.md');
-  console.log('   Continue gate scaffolded: finalOracle / roundOutcome / nextForcedBet');
-  console.log('   Next: confirm with Boss → sessions_spawn dispatch');
-  console.log('   After sprint: fill → harness/reports/sprint-*-report.md');
+  console.log('   Continue gate synced into report + harness/artifacts/continue-gate');
+  if (!CONSUME_RESULT) {
+    console.log('   Next: confirm with Boss → sessions_spawn dispatch');
+  }
+  console.log('   Report path: harness/reports/sprint-*-report.md');
   console.log('');
 }
 

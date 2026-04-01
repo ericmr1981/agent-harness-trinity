@@ -39,14 +39,18 @@ const result = await exec(`node ${harnessScript} "${taskDescription}"`);
 
 ### Continue-gate / report flags (v5-preview)
 
-Use these flags when the run needs to record a real blocked state or attach evidence into the report scaffold:
+Use these flags when the run needs to record a real blocked state, close the goal explicitly, or backfill evidence into the report/result chain:
 
 ```bash
 --blocked-external
 --blocked-approval
+--goal-closed
+--consume-result
 --result-status "⚠️ partial"
 --failure-type "L1"
 --evidence-artifact "artifacts/test-failure-2026-04-01.log"
+--last-evidence "npm test => passed"
+--verification-evidence "bash scripts/run_change_guard.sh"
 ```
 
 Examples:
@@ -54,6 +58,7 @@ Examples:
 ```bash
 node harness.js --blocked-external --result-status "🔴 blocked" --failure-type "L0" --evidence-artifact "artifacts/build-error.log" "修复构建失败"
 node harness.js --blocked-approval --result-status "🔴 blocked" "部署到生产"
+node harness.js --consume-result --goal-closed --result-status "✅ done" --last-evidence "bash scripts/run_change_guard.sh => passed" --verification-evidence "bash scripts/run_change_guard.sh" --evidence-artifact "harness/artifacts/continue-gate/sprint-1.json" "修复构建失败"
 ```
 
 ### Step 2: Parse output and extract sessions_spawn command

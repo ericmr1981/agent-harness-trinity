@@ -9,3 +9,12 @@ __pycache__/
 dev-project-harness-loop/scripts/.harness-*.json
 dev-project-harness-loop/scripts/ACTIVE.md
 dev-project-harness-loop/scripts/harness/
+
+# harness.js runtime artifacts (repo root)
+.harness-*.json
+WORKSPACE.md
+harness/context/
+harness/reports/
+harness/artifacts/continue-gate/
+harness/assignments/master-brief-*.md
+harness/contracts/sprint-1.md
