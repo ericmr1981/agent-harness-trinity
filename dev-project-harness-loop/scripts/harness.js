@@ -33,6 +33,7 @@ const WORKSPACE_ROOT = WORKSPACE;                                          // wo
 const WORKSPACE_INDEX = path.join(WORKSPACE_ROOT, 'WORKSPACE.md');         // project index (not content)
 const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');                 // legacy tasks index
 const GITHUB_ROOT    = process.env.GITHUB_ROOT || '/Users/ericmr/Documents/GitHub';
+const MASTER_CONFIG_FILE = path.join(WORKSPACE, '.harness-master.json');
 
 // ─────────────────────────────────────────────────────────────
 // ARGUMENT PARSING
@@ -146,8 +147,10 @@ async function main() {
     }
   }
 
+  const previousMasterConfig = await readPreviousMasterConfig();
+
   // Step 6: Sprint plan
-  const plan = await generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath);
+  const plan = await generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig);
 
   // Step 7: Dispatch
   if (!DRY_RUN) {
@@ -163,7 +166,7 @@ async function main() {
     dispatchTime: new Date().toISOString(),
     version: 'harness.js v5-preview'
   };
-  await writeFile(path.join(WORKSPACE, '.harness-master.json'), JSON.stringify(masterConfig, null, 2));
+  await writeFile(MASTER_CONFIG_FILE, JSON.stringify(masterConfig, null, 2));
 
   // Step 9: Generate post-task report (scaffold — actual run data filled by main agent after execution)
   await writePostTaskScaffold(masterConfig);
@@ -694,7 +697,7 @@ async function handleClarification(llmResult) {
 // ─────────────────────────────────────────────────────────────
 // STEP 5: Sprint plan (updated for v4)
 // ─────────────────────────────────────────────────────────────
-async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath) {
+async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig = null) {
   const sprints = [];
   const baseDir = path.join(HARNESS_DIR, 'contracts');
   await mkdir(baseDir, { recursive: true });
@@ -712,7 +715,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
 
   // Determine attachment tier
   const tier = scoreToAttachmentTier(complexity);
-  const continueGate = deriveContinueGate(taskDescription, project, llmResult, scan, complexity);
+  const continueGate = deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig);
   console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF only' : 'full 6-7 files'})`);
 
   if (llmResult?.isMultiAgent && llmResult.agentPlan?.length > 0) {
@@ -806,6 +809,7 @@ cd "${project.repoPath}" && ${scan.buildCmd} && ${scan.guardCmd}
 - **Current Blocker**: ${continueGate.currentBlocker}
 - **Stop Allowed**: ${continueGate.stopAllowed}
 - **Next Forced Bet**: ${continueGate.nextForcedBet}
+- **No-Evidence Rounds**: ${continueGate.noEvidenceRounds}
 - **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
 ` : '';
 
@@ -833,23 +837,82 @@ ${llmResult?.enhancedBrief || ''}
 *Generated: ${new Date().toISOString()}*`;
 }
 
-function deriveContinueGate(taskDescription, project, llmResult, scan, complexity) {
+async function readPreviousMasterConfig() {
+  try {
+    const raw = await readFile(MASTER_CONFIG_FILE, 'utf8');
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeTaskText(text = '') {
+  return String(text).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function buildBranchKey(project, taskDescription) {
+  return `${project.repoPath}::${normalizeTaskText(taskDescription)}`;
+}
+
+function deriveEvidenceFingerprint(taskDescription, llmResult, scan, complexity) {
+  return JSON.stringify({
+    task: normalizeTaskText(taskDescription),
+    complexity,
+    taskType: llmResult?.taskProfile?.taskType || 'unknown',
+    riskLevel: llmResult?.taskProfile?.riskLevel || 'unknown',
+    scopeGuess: llmResult?.taskProfile?.scopeGuess || 'unknown',
+    buildCmd: scan?.buildCmd || null,
+    guardCmd: scan?.guardCmd || null,
+    topFiles: (scan?.topFiles || []).slice(0, 5).map(f => f.rel)
+  });
+}
+
+function deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig = null) {
+  const branchKey = buildBranchKey(project, taskDescription);
+  const evidenceFingerprint = deriveEvidenceFingerprint(taskDescription, llmResult, scan, complexity);
+  const previousBranchKey = previousMasterConfig?.continueGate?.branchKey || null;
+  const previousFingerprint = previousMasterConfig?.continueGate?.evidenceFingerprint || null;
+  const sameBranch = previousBranchKey === branchKey;
+
+  let evidenceDelta = 'pending-first-round';
+  let noEvidenceRounds = 0;
+
+  if (!previousMasterConfig || !sameBranch) {
+    evidenceDelta = 'new-branch';
+    noEvidenceRounds = 0;
+  } else if (previousFingerprint === evidenceFingerprint) {
+    evidenceDelta = 'none';
+    noEvidenceRounds = (previousMasterConfig?.continueGate?.noEvidenceRounds || 0) + 1;
+  } else {
+    evidenceDelta = 'changed';
+    noEvidenceRounds = 0;
+  }
+
+  const pivotAfterNoEvidenceRounds = 2;
+  const roundOutcome = noEvidenceRounds >= pivotAfterNoEvidenceRounds ? 'pivot_required' : 'retry_with_new_bet';
   const finalOracle = scan
     ? `Live acceptance for \"${taskDescription}\" plus local oracle: ${scan.buildCmd} && ${scan.guardCmd}`
     : `Human-visible final acceptance for \"${taskDescription}\"`;
 
-  const nextForcedBet = scan
-    ? `Execute one bounded bet, then run ${scan.buildCmd} and ${scan.guardCmd}; if final oracle still fails, record evidence delta and launch the next repair step.`
-    : 'Execute one bounded bet, verify against the real acceptance path, and if the final oracle still fails, record evidence delta and continue.';
+  const nextForcedBet = roundOutcome === 'pivot_required'
+    ? 'Change branch/approach now, inform Boss of the pivot, and continue without waiting for confirmation unless a new approval boundary appears.'
+    : (scan
+      ? `Execute one bounded bet, then run ${scan.buildCmd} and ${scan.guardCmd}; if final oracle still fails, record evidence delta and launch the next repair step.`
+      : 'Execute one bounded bet, verify against the real acceptance path, and if the final oracle still fails, record evidence delta and continue.');
 
   return {
+    branchKey,
+    evidenceFingerprint,
     finalOracle,
-    currentBlocker: 'Not yet verified against final oracle. Replace with concrete blocker after the first failed live check.',
-    roundOutcome: 'retry_with_new_bet',
+    currentBlocker: roundOutcome === 'pivot_required'
+      ? 'Same branch produced no meaningful new evidence for two consecutive rounds; pivot required.'
+      : 'Not yet verified against final oracle. Replace with concrete blocker after the first failed live check.',
+    roundOutcome,
     stopAllowed: 'no',
     nextForcedBet,
-    evidenceDelta: 'pending-first-round',
-    pivotAfterNoEvidenceRounds: 2,
+    evidenceDelta,
+    noEvidenceRounds,
+    pivotAfterNoEvidenceRounds,
     localOracle: scan ? `${scan.buildCmd} && ${scan.guardCmd}` : 'project-local verification command not yet discovered'
   };
 }
@@ -1067,6 +1130,7 @@ async function updateActive(project, taskDescription, plan) {
 - **Stop Allowed**: ${continueGate.stopAllowed}
 - **Next Forced Bet**: ${continueGate.nextForcedBet}
 - **Evidence Delta**: ${continueGate.evidenceDelta}
+- **No-Evidence Rounds**: ${continueGate.noEvidenceRounds}
 - **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
 ` : '';
 
@@ -1149,6 +1213,7 @@ async function writePostTaskScaffold(masterConfig) {
 | Stop Allowed | ${continueGate?.stopAllowed || 'no'} |
 | Next Forced Bet | ${continueGate?.nextForcedBet || '⬜ fill'} |
 | Evidence Delta | ${continueGate?.evidenceDelta || 'pending-first-round'} |
+| No-Evidence Rounds | ${continueGate?.noEvidenceRounds || 0} |
 | Pivot Trigger | ${continueGate?.pivotAfterNoEvidenceRounds || 2} no-evidence rounds |
 
 ---
@@ -1257,6 +1322,7 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
     console.log(`Final Oracle: ${continueGate.finalOracle}`);
     console.log(`Round Outcome: ${continueGate.roundOutcome} | Stop Allowed: ${continueGate.stopAllowed}`);
     console.log(`Next Forced Bet: ${continueGate.nextForcedBet}`);
+    console.log(`Evidence Delta: ${continueGate.evidenceDelta} | No-Evidence Rounds: ${continueGate.noEvidenceRounds}`);
     console.log(`Pivot Trigger: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch`);
   }
 

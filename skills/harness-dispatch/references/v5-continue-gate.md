@@ -1,6 +1,6 @@
 # harness-dispatch v5 — Continue Gate + Pivot Design
 
-Status: design draft (not implemented yet)
+Status: v5-preview partially implemented (runtime fields + pivot trigger landed; full closure still pending)
 
 ## Goal
 Prevent the harness from exiting into progress-report mode when the final acceptance oracle still fails and no true blocker exists.

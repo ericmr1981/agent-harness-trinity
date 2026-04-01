@@ -1,6 +1,6 @@
 # dev-project-harness-loop v5 — Goal-Closed Continue Gate
 
-Status: design draft (not implemented yet)
+Status: v5-preview partially implemented (runtime fields + pivot trigger landed; full closure still pending)
 
 ## Problem
 A long-running project can still fail if the loop switches from execution mode to report mode after only narrowing the blocker.
