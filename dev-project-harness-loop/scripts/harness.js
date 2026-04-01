@@ -42,10 +42,15 @@ const rawArgs = process.argv.slice(2);
 const MODE_ARG    = extractArg('--mode', rawArgs) || 'llm';           // default: full LLM
 const COMPLEXITY  = parseInt(extractArg('--complexity', rawArgs) || '0'); // 0 = auto
 const DRY_RUN     = rawArgs.includes('--dry-run');
-const TASK_ARGS   = rawArgs.filter(a => !a.startsWith('--'));
-const taskDescription = TASK_ARGS.join(' ') || '';
+const BLOCKED_EXTERNAL = rawArgs.includes('--blocked-external');
+const BLOCKED_APPROVAL = rawArgs.includes('--blocked-approval');
+const RESULT_STATUS = extractArg('--result-status', rawArgs) || '';
+const FAILURE_TYPE = extractArg('--failure-type', rawArgs) || '';
+const EVIDENCE_ARTIFACT = extractArg('--evidence-artifact', rawArgs) || '';
+const TASK_ARGS_CLEAN = stripFlagValues(rawArgs, new Set(['--mode', '--complexity', '--result-status', '--failure-type', '--evidence-artifact']));
+const taskDescriptionClean = TASK_ARGS_CLEAN.join(' ') || '';
 
-if (!taskDescription) {
+if (!taskDescriptionClean) {
   console.error('❌ Usage: /harness [flags] <task description>\n   Flags: --mode <minimal|keyword|llm|llm-full> --complexity <0-10> --no-preflight --dry-run');
   process.exit(1);
 }
@@ -86,21 +91,21 @@ const ALL_DOMAIN_KEYWORDS = Object.values(AGENT_KEYWORDS).flatMap(a => a.keyword
 // MAIN
 // ─────────────────────────────────────────────────────────────
 async function main() {
-  console.log(`\n🔍 Analyzing task: ${taskDescription}`);
+  console.log(`\n🔍 Analyzing task: ${taskDescriptionClean}`);
   console.log(`   Mode: ${MODE_ARG} | Complexity override: ${COMPLEXITY || 'auto'}\n`);
 
   // Token tracking init
   const tokenTrack = { mode: MODE_ARG, llmCalls: 0, estimatedTokens: 0, subagentEstimate: 0 };
 
   // Step 1: Discover project
-  const project = await discoverProject(taskDescription);
+  const project = await discoverProject(taskDescriptionClean);
   console.log(`📁 Project: ${project.displayName} | Repo: ${project.repoPath}`);
 
   // Step 1.5: CONTEXT ASSEMBLER (skipped in minimal mode)
   let contextPackagePath = null;
   if (MODE_ARG !== 'minimal') {
     try {
-      contextPackagePath = await runContextAssembler(project.repoPath, taskDescription);
+      contextPackagePath = await runContextAssembler(project.repoPath, taskDescriptionClean);
     } catch (e) {
       console.log(`   ⚠️  ContextAssembler failed (${e.message}), continuing without context package`);
     }
@@ -119,18 +124,18 @@ async function main() {
   }
 
   // Step 3: Complexity scoring (override or compute)
-  const complexity = COMPLEXITY > 0 ? COMPLEXITY : (scan ? computeComplexity(taskDescription, scan) : 3);
+  const complexity = COMPLEXITY > 0 ? COMPLEXITY : (scan ? computeComplexity(taskDescriptionClean, scan) : 3);
   console.log(`\n📊 Complexity Score: ${complexity}/10 → Profile: ${scoreToProfile(complexity)}`);
 
   // Step 4: LLM analysis (skip in minimal/keyword modes)
   let llmResult = null;
   if (MODE_ARG === 'llm' || MODE_ARG === 'llm-full') {
-    llmResult = await analyzeTaskWithLLM(taskDescription, project, scan);
+    llmResult = await analyzeTaskWithLLM(taskDescriptionClean, project, scan);
     tokenTrack.llmCalls += 1;
     tokenTrack.estimatedTokens += 2500;
   } else {
     // keyword fallback
-    llmResult = keywordAnalysis(taskDescription, scan);
+    llmResult = keywordAnalysis(taskDescriptionClean, scan);
     tokenTrack.estimatedTokens += 150;
   }
 
@@ -142,7 +147,7 @@ async function main() {
       process.exit(0);
     }
     if (MODE_ARG === 'llm' || MODE_ARG === 'llm-full') {
-      llmResult = await analyzeTaskWithLLM(`${taskDescription} ${answer}`, project, scan);
+      llmResult = await analyzeTaskWithLLM(`${taskDescriptionClean} ${answer}`, project, scan);
       tokenTrack.llmCalls += 1;
     }
   }
@@ -150,7 +155,7 @@ async function main() {
   const previousMasterConfig = await readPreviousMasterConfig();
 
   // Step 6: Sprint plan
-  const plan = await generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig);
+  const plan = await generateSprintPlan(taskDescriptionClean, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig);
 
   // Step 7: Dispatch
   if (!DRY_RUN) {
@@ -160,7 +165,7 @@ async function main() {
 
   // Step 8: Write master + report
   const masterConfig = {
-    project, taskDescription, llmResult, plan, complexity,
+    project, taskDescription: taskDescriptionClean, llmResult, plan, complexity,
     tokenTrack,
     continueGate: plan.continueGate,
     dispatchTime: new Date().toISOString(),
@@ -171,7 +176,7 @@ async function main() {
   // Step 9: Generate post-task report (scaffold — actual run data filled by main agent after execution)
   await writePostTaskScaffold(masterConfig);
 
-  printReport(project, taskDescription, llmResult, plan, complexity, tokenTrack);
+  printReport(project, taskDescriptionClean, llmResult, plan, complexity, tokenTrack);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -889,16 +894,23 @@ function deriveContinueGate(taskDescription, project, llmResult, scan, complexit
   }
 
   const pivotAfterNoEvidenceRounds = 2;
-  const roundOutcome = noEvidenceRounds >= pivotAfterNoEvidenceRounds ? 'pivot_required' : 'retry_with_new_bet';
+  let roundOutcome = noEvidenceRounds >= pivotAfterNoEvidenceRounds ? 'pivot_required' : 'retry_with_new_bet';
   const finalOracle = scan
     ? `Live acceptance for \"${taskDescription}\" plus local oracle: ${scan.buildCmd} && ${scan.guardCmd}`
     : `Human-visible final acceptance for \"${taskDescription}\"`;
 
+  if (BLOCKED_APPROVAL) roundOutcome = 'blocked_approval';
+  if (BLOCKED_EXTERNAL) roundOutcome = 'blocked_external';
+
   const nextForcedBet = roundOutcome === 'pivot_required'
     ? 'Change branch/approach now, inform Boss of the pivot, and continue without waiting for confirmation unless a new approval boundary appears.'
-    : (scan
-      ? `Execute one bounded bet, then run ${scan.buildCmd} and ${scan.guardCmd}; if final oracle still fails, record evidence delta and launch the next repair step.`
-      : 'Execute one bounded bet, verify against the real acceptance path, and if the final oracle still fails, record evidence delta and continue.');
+    : roundOutcome === 'blocked_approval'
+      ? 'Pause execution at the approval boundary, notify Boss with the exact action awaiting approval, and resume after approval.'
+      : roundOutcome === 'blocked_external'
+        ? 'Record the external blocker with evidence, notify Boss, and switch to another executable branch or wait for the dependency to recover.'
+        : (scan
+          ? `Execute one bounded bet, then run ${scan.buildCmd} and ${scan.guardCmd}; if final oracle still fails, record evidence delta and launch the next repair step.`
+          : 'Execute one bounded bet, verify against the real acceptance path, and if the final oracle still fails, record evidence delta and continue.');
 
   return {
     branchKey,
@@ -906,14 +918,21 @@ function deriveContinueGate(taskDescription, project, llmResult, scan, complexit
     finalOracle,
     currentBlocker: roundOutcome === 'pivot_required'
       ? 'Same branch produced no meaningful new evidence for two consecutive rounds; pivot required.'
-      : 'Not yet verified against final oracle. Replace with concrete blocker after the first failed live check.',
+      : roundOutcome === 'blocked_approval'
+        ? 'Execution hit an approval boundary that requires Boss approval before continuing.'
+        : roundOutcome === 'blocked_external'
+          ? 'Execution is blocked by an external/platform/tooling dependency.'
+          : 'Not yet verified against final oracle. Replace with concrete blocker after the first failed live check.',
     roundOutcome,
-    stopAllowed: 'no',
+    stopAllowed: roundOutcome === 'blocked_approval' || roundOutcome === 'blocked_external' ? 'yes' : 'no',
     nextForcedBet,
     evidenceDelta,
     noEvidenceRounds,
     pivotAfterNoEvidenceRounds,
-    localOracle: scan ? `${scan.buildCmd} && ${scan.guardCmd}` : 'project-local verification command not yet discovered'
+    localOracle: scan ? `${scan.buildCmd} && ${scan.guardCmd}` : 'project-local verification command not yet discovered',
+    evidenceArtifact: EVIDENCE_ARTIFACT || '',
+    resultStatus: RESULT_STATUS || '',
+    failureType: FAILURE_TYPE || ''
   };
 }
 
@@ -1214,6 +1233,7 @@ async function writePostTaskScaffold(masterConfig) {
 | Next Forced Bet | ${continueGate?.nextForcedBet || '⬜ fill'} |
 | Evidence Delta | ${continueGate?.evidenceDelta || 'pending-first-round'} |
 | No-Evidence Rounds | ${continueGate?.noEvidenceRounds || 0} |
+| Evidence Artifact | ${continueGate?.evidenceArtifact || '⬜ fill'} |
 | Pivot Trigger | ${continueGate?.pivotAfterNoEvidenceRounds || 2} no-evidence rounds |
 
 ---
@@ -1237,11 +1257,11 @@ async function writePostTaskScaffold(masterConfig) {
 
 | Field | Value |
 |-------|-------|
-| Status | 🔴 not started / ⚠️ partial / ✅ done / 🔴 blocked |
+| Status | ${continueGate?.resultStatus || '🔴 not started / ⚠️ partial / ✅ done / 🔴 blocked'} |
 | Actual Duration | __ min |
 | Retry Count | __ |
-| Failure Type | none / L0 / L1 / L2 |
-| Round Outcome | goal_closed / retry_with_new_bet / pivot_required / blocked_external / blocked_approval |
+| Failure Type | ${continueGate?.failureType || 'none / L0 / L1 / L2'} |
+| Round Outcome | ${continueGate?.roundOutcome || 'goal_closed / retry_with_new_bet / pivot_required / blocked_external / blocked_approval'} |
 
 ### What was done
 ⬜ List completed items
@@ -1323,6 +1343,9 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
     console.log(`Round Outcome: ${continueGate.roundOutcome} | Stop Allowed: ${continueGate.stopAllowed}`);
     console.log(`Next Forced Bet: ${continueGate.nextForcedBet}`);
     console.log(`Evidence Delta: ${continueGate.evidenceDelta} | No-Evidence Rounds: ${continueGate.noEvidenceRounds}`);
+    if (continueGate.evidenceArtifact) console.log(`Evidence Artifact: ${continueGate.evidenceArtifact}`);
+    if (continueGate.failureType) console.log(`Failure Type: ${continueGate.failureType}`);
+    if (continueGate.resultStatus) console.log(`Result Status: ${continueGate.resultStatus}`);
     console.log(`Pivot Trigger: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch`);
   }
 
@@ -1361,6 +1384,20 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
 function extractArg(name, args) {
   const idx = args.indexOf(name);
   return idx >= 0 && idx + 1 < args.length ? args[idx + 1] : null;
+}
+
+function stripFlagValues(args, flagsWithValues) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (flagsWithValues.has(arg)) {
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--')) continue;
+    out.push(arg);
+  }
+  return out;
 }
 
 main().catch(err => {

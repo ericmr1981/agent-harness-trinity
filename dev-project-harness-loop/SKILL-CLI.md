@@ -37,6 +37,25 @@ const harnessScript = "/Users/ericmr/Documents/GitHub/agent-harness-trinity/dev-
 const result = await exec(`node ${harnessScript} "${taskDescription}"`);
 ```
 
+### Continue-gate / report flags (v5-preview)
+
+Use these flags when the run needs to record a real blocked state or attach evidence into the report scaffold:
+
+```bash
+--blocked-external
+--blocked-approval
+--result-status "⚠️ partial"
+--failure-type "L1"
+--evidence-artifact "artifacts/test-failure-2026-04-01.log"
+```
+
+Examples:
+
+```bash
+node harness.js --blocked-external --result-status "🔴 blocked" --failure-type "L0" --evidence-artifact "artifacts/build-error.log" "修复构建失败"
+node harness.js --blocked-approval --result-status "🔴 blocked" "部署到生产"
+```
+
 ### Step 2: Parse output and extract sessions_spawn command
 
 The harness.js output includes:

@@ -51,7 +51,7 @@
 - **当前稳定基线**：`harness.js v4`
 - **下一版本轨道**：`v5 Continue Gate + Pivot`
 - **v5 目标**：堵住“最终 oracle 未通过但先进入汇报模式”的侧门；失败后默认继续修复，连续两轮无新证据时自动换策略并告知 Boss。
-- **当前实现状态**：已落地 v5-preview runtime：`harness.js` 输出 continue-gate 字段，并具备跨轮 `evidenceDelta` / `noEvidenceRounds` / `pivot_required` 判定；ACTIVE/report/contract 模板字段与 failure recovery / assignment header 规则已同步。完整闭环仍待继续推进。
+- **当前实现状态**：已落地 v5-preview runtime：`harness.js` 输出 continue-gate 字段，并具备跨轮 `evidenceDelta` / `noEvidenceRounds` / `pivot_required` 判定；同时支持 `--blocked-external` / `--blocked-approval` / `--evidence-artifact` / `--result-status` / `--failure-type` 进入 report scaffold。ACTIVE/report/contract 模板字段与 failure recovery / assignment header 规则已同步。完整闭环仍待继续推进。
 - 设计入口：
   - `skills/harness-dispatch/references/v5-continue-gate.md`
   - `dev-project-harness-loop/references/v5-continue-gate.md`
