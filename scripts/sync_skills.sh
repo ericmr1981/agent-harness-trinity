@@ -188,7 +188,6 @@ agency-agents-lib/agents/engineering/engineering-frontend-developer.md  | skills
 agency-agents-lib/agents/engineering/engineering-backend-architect.md   | skills/agency-agents-lib/agents/engineering/engineering-backend-architect.md   | optional
 agency-agents-lib/agents/engineering/engineering-senior-developer.md     | skills/agency-agents-lib/agents/engineering/engineering-senior-developer.md     | optional
 agency-agents-lib/agents/engineering/engineering-ai-engineer.md         | skills/agency-agents-lib/agents/engineering/engineering-ai-engineer.md         | optional
-agency-agents-lib/agents/engineering/engineering-test-engineer.md       | skills/agency-agents-lib/agents/engineering/engineering-test-engineer.md       | optional
 agency-agents-lib/agents/engineering/engineering-devops-automator.md    | skills/agency-agents-lib/agents/engineering/engineering-devops-automator.md    | optional
 agency-agents-lib/agents/engineering/engineering-security-engineer.md    | skills/agency-agents-lib/agents/engineering/engineering-security-engineer.md    | optional
 agency-agents-lib/agents/engineering/engineering-database-optimizer.md   | skills/agency-agents-lib/agents/engineering/engineering-database-optimizer.md   | optional
@@ -200,6 +199,8 @@ agency-agents-lib/agents/engineering/engineering-incident-response-commander.md 
 agency-agents-lib/agents/engineering/engineering-code-reviewer.md        | skills/agency-agents-lib/agents/engineering/engineering-code-reviewer.md        | optional
 agency-agents-lib/agents/design/design-ui-designer.md                   | skills/agency-agents-lib/agents/design/design-ui-designer.md                   | optional
 agency-agents-lib/agents/design/design-ux-researcher.md                  | skills/agency-agents-lib/agents/design/design-ux-researcher.md                  | optional
+dev-project-harness-loop/references/sprint-contract-template.md       | dev-project-harness-loop/references/sprint-contract-template.md       | core
+dev-project-harness-loop/references/qa-report-template.md              | dev-project-harness-loop/references/qa-report-template.md              | core
 "
 
 # ─────────────────────────────────────────────────────────────
