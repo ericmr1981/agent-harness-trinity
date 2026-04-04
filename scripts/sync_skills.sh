@@ -201,6 +201,7 @@ agency-agents-lib/agents/design/design-ui-designer.md                   | skills
 agency-agents-lib/agents/design/design-ux-researcher.md                  | skills/agency-agents-lib/agents/design/design-ux-researcher.md                  | optional
 dev-project-harness-loop/references/sprint-contract-template.md       | dev-project-harness-loop/references/sprint-contract-template.md       | core
 dev-project-harness-loop/references/qa-report-template.md              | dev-project-harness-loop/references/qa-report-template.md              | core
+dev-project-harness-loop/references/SKILL-reference.md                 | dev-project-harness-loop/references/SKILL-reference.md                 | core
 "
 
 # ─────────────────────────────────────────────────────────────

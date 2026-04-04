@@ -21,35 +21,60 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const CONTEXT_DIR = 'harness/context';
-const MAX_FILE_SIZE_KB = 8;     // skip files > 8KB
-const MAX_FILES_READ = 12;       // max source files to include
-const MAX_DIFF_LINES = 60;       // max git diff lines
-const MAX_LOG_ENTRIES = 5;       // max git log entries
+// ─── CLI-overridable limits ───────────────────────────────────
+const MAX_FILE_SIZE_KB_DEFAULT = 8;   // skip files > N KB
+const MAX_FILES_READ_DEFAULT   = 12;  // max source files to include
+const MAX_DIFF_LINES_DEFAULT    = 60;  // max git diff lines
+const MAX_LOG_ENTRIES_DEFAULT   = 5;   // max git log entries
+const MAX_CHARS_DEFAULT         = 0;   // 0 = no cap; set via --max-chars
+
+// Parse CLI overrides
+function parseLimits(argv) {
+  const limits = {
+    maxFileSizeKb: MAX_FILE_SIZE_KB_DEFAULT,
+    maxFiles:      MAX_FILES_READ_DEFAULT,
+    maxDiffLines: MAX_DIFF_LINES_DEFAULT,
+    maxLogEntries: MAX_LOG_ENTRIES_DEFAULT,
+    maxChars:      MAX_CHARS_DEFAULT,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--max-file-size-kb') limits.maxFileSizeKb = parseInt(argv[++i]) || 8;
+    if (argv[i] === '--max-files')         limits.maxFiles      = parseInt(argv[++i]) || 12;
+    if (argv[i] === '--max-diff-lines')     limits.maxDiffLines  = parseInt(argv[++i]) || 60;
+    if (argv[i] === '--max-log-entries')    limits.maxLogEntries = parseInt(argv[++i]) || 5;
+    if (argv[i] === '--max-chars')           limits.maxChars      = parseInt(argv[++i]) || 0;
+  }
+  return limits;
+}
+
+const LIMITS = parseLimits(process.argv);
 
 // ─────────────────────────────────────────────────────────────
 // Main entry
 // ─────────────────────────────────────────────────────────────
-export async function run(repoPath, taskDescription) {
+export async function run(repoPath, taskDescription, overrides = {}) {
   const workDir = repoPath || process.cwd();
   const task = taskDescription || '';
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const limits = { ...LIMITS, ...overrides };
 
   console.log(`\n📡 ContextAssembler: building context package for:`);
   console.log(`   Repo: ${workDir}`);
   console.log(`   Task: ${task}`);
+  console.log(`   Limits: maxFiles=${limits.maxFiles} maxFileSizeKb=${limits.maxFileSizeKb} maxChars=${limits.maxChars || 'none'}`);
 
   // Gather all context sections in parallel
   const [gitState, featuresState, contractsState, handoffsState, activeState, srcFiles] = await Promise.all([
-    gatherGitState(workDir),
+    gatherGitState(workDir, limits),
     gatherFeatures(workDir),
     gatherContracts(workDir),
     gatherHandoffs(workDir),
     gatherActive(workDir),
-    gatherRelevantSources(workDir, task),
+    gatherRelevantSources(workDir, task, limits),
   ]);
 
   // Build package
-  const pkg = buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, srcFiles });
+  const pkg = buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, srcFiles, limits });
 
   // Write file
   const contextDir = path.join(workDir, CONTEXT_DIR);
@@ -66,7 +91,7 @@ export async function run(repoPath, taskDescription) {
 // ─────────────────────────────────────────────────────────────
 // Section 1: Git state
 // ─────────────────────────────────────────────────────────────
-async function gatherGitState(repoPath) {
+async function gatherGitState(repoPath, limits) {
   let branch = 'unknown', status = 'unknown', log = '', diff = '';
 
   try {
@@ -78,13 +103,13 @@ async function gatherGitState(repoPath) {
   } catch (_) {}
 
   try {
-    const logRaw = execSync(`git -C "${repoPath}" log -n ${MAX_LOG_ENTRIES} --oneline`, { encoding: 'utf8', timeout: 5000 }).trim();
+    const logRaw = execSync(`git -C "${repoPath}" log -n ${limits.maxLogEntries} --oneline`, { encoding: 'utf8', timeout: 5000 }).trim();
     log = logRaw.split('\n').map(l => `  ${l}`).join('\n');
   } catch (_) {}
 
   try {
     const diffRaw = execSync(`git -C "${repoPath}" diff --stat HEAD`, { encoding: 'utf8', timeout: 5000 }).trim();
-    diff = diffRaw.split('\n').slice(0, MAX_DIFF_LINES).join('\n');
+    diff = diffRaw.split('\n').slice(0, limits.maxDiffLines).join('\n');
   } catch (_) {}
 
   let uncommitted = '';
@@ -174,7 +199,7 @@ async function gatherActive(repoPath) {
 // ─────────────────────────────────────────────────────────────
 // Section 6: Relevant source files
 // ─────────────────────────────────────────────────────────────
-async function gatherRelevantSources(repoPath, task) {
+async function gatherRelevantSources(repoPath, task, limits) {
   const keywords = extractKeywords(task);
   const candidates = [];
 
@@ -200,14 +225,14 @@ async function gatherRelevantSources(repoPath, task) {
 
   // Sort by score, take top N
   candidates.sort((a, b) => b.score - a.score);
-  const selected = candidates.slice(0, MAX_FILES_READ);
+  const selected = candidates.slice(0, limits.maxFiles);
 
   // Read file contents (skip large files)
   const results = [];
   for (const { fp } of selected) {
     try {
       const s = await stat(fp);
-      if (s.size > MAX_FILE_SIZE_KB * 1024) continue;
+      if (s.size > limits.maxFileSizeKb * 1024) continue;
       const raw = await readFile(fp, 'utf8');
       const rel = path.relative(repoPath, fp);
       results.push({ path: rel, preview: raw.slice(0, 800) });
@@ -233,7 +258,7 @@ function extractKeywords(task) {
 // ─────────────────────────────────────────────────────────────
 // Build the context package markdown
 // ─────────────────────────────────────────────────────────────
-function buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, srcFiles }) {
+function buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, srcFiles, limits }) {
   const lines = [];
 
   lines.push(`# Context Package`);
@@ -320,7 +345,12 @@ function buildPackage({ workDir, task, timestamp, gitState, featuresState, contr
   lines.push(`---`);
   lines.push(`*ContextAssembler v1 | ${timestamp}*`);
 
-  return lines.join('\n');
+  let pkg = lines.join('\n');
+  if (limits.maxChars > 0 && pkg.length > limits.maxChars) {
+    pkg = pkg.slice(0, limits.maxChars);
+    pkg += `\n\n*[TRUNCATED by ContextAssembler: exceeded ${limits.maxChars} char limit]*`;
+  }
+  return pkg;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -329,7 +359,13 @@ function buildPackage({ workDir, task, timestamp, gitState, featuresState, contr
 if (process.argv[1] === __filename) {
   const repoPath = process.argv[2] || process.cwd();
   const taskDescription = process.argv.slice(3).join(' ');
-  run(repoPath, taskDescription).catch(err => {
+  const overrides = {};
+  for (let i = 3; i < process.argv.length; i++) {
+    if (process.argv[i] === '--max-files')        overrides.maxFiles      = parseInt(process.argv[++i]);
+    if (process.argv[i] === '--max-file-size-kb') overrides.maxFileSizeKb = parseInt(process.argv[++i]);
+    if (process.argv[i] === '--max-chars')         overrides.maxChars      = parseInt(process.argv[++i]);
+  }
+  run(repoPath, taskDescription, overrides).catch(err => {
     console.error('❌ ContextAssembler error:', err.message);
     process.exit(1);
   });
