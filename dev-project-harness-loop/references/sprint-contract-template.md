@@ -74,6 +74,46 @@ Minimum: happy path + edge/permission/error path.
   - Code quality: >= <threshold>
   - Security basics: PASS/FAIL (if applicable)
 
+## Regression Prevention（强制 — Bug Fix 必须遵守）
+
+> 目的：改 bug 时不引入新 bug。
+
+### Bug Fix 专项约束
+如果本 sprint 包含 bug fix，必须遵守：
+
+**1. Bet 开始前：记录 baseline**
+```bash
+# 每个 bet 开始前，跑测试并保存结果
+npm test > artifacts/baseline-before-<bet-id>.txt 2>&1
+echo "BASELINE_EXIT_CODE=$?" >> artifacts/baseline-before-<bet-id>.txt
+```
+baseline 文件必须 commit（不然后面无法对比）。
+
+**2. Bet 结束后：确认无新增失败**
+```bash
+npm test > artifacts/baseline-after-<bet-id>.txt 2>&1
+diff artifacts/baseline-before-<bet-id>.txt artifacts/baseline-after-<bet-id>.txt
+# 如果有新增失败项 → 新 bug 引入，必须先修再继续
+```
+
+**3. Bug fix 必须同时写 Fix-Itself Test**
+- 在 `tests/` 或 `spec/` 下新增一个 test
+- 这个 test 在 bug 存在时 FAIL，修复后 PASS
+- 如果是纯 UI/手动流程 bug，写在 `features.json` 对应条目下作为验证条件
+
+**4. Atomic 约束**
+- 一个 bet / commit 只改一个功能点或一个 bug
+- 如果发现自己在修 bug 时顺手改了无关代码 → 必须拆开
+- Review 时问："这个 commit 改了什么？" 答不上来 → 拆
+
+### Regression Oracle 示例
+```bash
+# Baseline diff（最简回归验证）
+npm test 2>&1 | tee artifacts/test-after-<bet-id>.log
+# 必须：after 的失败数 ≤ before 的失败数
+# 禁止：after 出现 before 没有的失败项
+```
+
 ## Risks / assumptions
 -
 

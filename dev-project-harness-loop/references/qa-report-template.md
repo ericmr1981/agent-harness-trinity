@@ -57,6 +57,23 @@ For each finding:
 ## Residual risk
 -
 
+## Regression Checklist（Bug Fix 必填）
+
+> 如果本 sprint 包含 bug fix，此部分必须填写。
+
+| Bet ID | Baseline 文件 | After 文件 | 新增失败项？ | Fix-Itself Test 存在？ |
+|--------|--------------|-----------|------------|----------------------|
+| bet-1  | artifacts/baseline-before-bet-1.txt | artifacts/baseline-after-bet-1.txt | 有/无 | 有/无 |
+| ...    | ... | ... | ... | ... |
+
+**逐条确认：**
+- [ ] 所有 bet 开始前都有 baseline 测试记录
+- [ ] 所有 bet 结束后都有 after 测试记录
+- [ ] 没有新增失败项（diff baseline → after 为空或仅已知项）
+- [ ] 每个 bug fix 都有 Fix-Itself Test
+
+**如果任何一项未满足 → 不得标记本 sprint 为 PASS。**
+
 ## Evaluator attestation（签署）
 - Verifier 不可以是 Builder本人
 - 所有 evidence 必须可通过 `git clone` + 命令复现
