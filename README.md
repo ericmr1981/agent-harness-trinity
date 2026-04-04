@@ -1,228 +1,252 @@
 # Agent Harness Trinity
 
-> **goal-closed, long-running agent work 的完整工具包**
+> 将 Git 仓库变为可验证、可暂停、可回退的 AI agent 执行状态机
+
+**Trinity** 是一套面向 OpenClaw agent 的项目执行框架，核心解决一个问题：
+> 长线任务做到一半断了，再打开时 agent 丢失上下文、重复劳动、无法验证进度。
 
 ---
 
-## 一、是什么
+## 设计思路
 
-三个核心技能 + 两个扩展技能，构成一个完整的"**执行 + 治理**"家族：
+### 核心观察
 
-| 技能 | 定位 |
-|------|------|
-| `dev-project-harness-loop` | **完整操作系统**：合同优先 + 守卫验证 + 持久记录 |
-| `dev-project-autoloop` | **执行循环**：bounded bet loop，commit/log/oracle-first |
-| `project-harness-guards` | **脚手架 + 守卫**：repo 初始化 + 变更守卫脚本 |
-| `subagent-coding-lite` *(扩展)* | **subagent 规范**：标准化 assignment/handoff/verification |
-| `harness-dispatch` *(扩展)* | **强制入口门卫**：所有 subagent 调度必须走这里 |
-| `agency-agents-lib` *(扩展)* | **专业角色库**：200+ 按需注入的 Builder/Verifier 角色 |
+长线 agent 任务失败通常死在这几个地方：
 
----
+| 死因 | 症状 | 根因 |
+|------|------|------|
+| 不可恢复 | 重开后 agent 问"我们刚才做到哪了" | 状态没有持久化到文件 |
+| 不可验证 | agent 说"完成了"，实际上没跑通 | 没有外部 oracle |
+| 目标发散 | 做了三小时，最后交付的东西不是要的 | 没有目标边界 |
+| 自我认可 | agent 自己写代码自己验收 | Builder = Verifier，利益冲突 |
+| 盲目继续 | oracle 失败后假装没看见继续跑 | 没有强制停止规则 |
 
-## 二、为什么存在
+### 核心解法
 
-长线任务失败通常因为：
+**把 Git 仓库当作持久化状态机。**
 
-- **不可恢复** — 状态没有持久化
-- **不可验证** — 没有 oracle
-- **不可回退** — 没有安全保存点
-- **目标发散** — 在任意阶段边界停下而非真正完成
+每做一个 bounded bet：
+1. **写文件** — 工作记录在 repo 文件里，不是 prompt 上下文里
+2. **跑 oracle** — 用外部系统验证，不是 agent 自我声明
+3. **Commit** — 每个 bet 有可回退的安全保存点
+4. **记录证据** — `artifacts/` 存原始输出，可被第三方审计
+5. **Guard 检查** — milestone 前必须过 `run_change_guard.sh`
 
-本工具包将 **Git 仓库视为持久化状态机**，强制执行：
+### Role 模型
 
-- 小而可逆的 bets
-- 显式的验证 oracle
-- commit-linked 进度日志
-- 里程碑前的 guard 检查
-- 结构化 artifacts（planner / builder / verifier 交接）
-- **默认不打断人**，只在 blocker / 审批边界 / 重大转向时暂停
+| Role | 职责 | 谁来做 |
+|------|------|--------|
+| **Planner** | 拆任务、定优先级、写合同 | 主 agent |
+| **Builder** | 实现 bounded bet | 主 agent 或 subagent |
+| **Verifier** | 独立验收，必须不是 Builder | 独立 subagent 或 human |
 
----
+**关键约束**：Builder 不验收自己的工作。Verifier 必须有独立证据。
 
-## 三、设计原则
+### Anti-Pattern 禁止清单
 
-- **最终目标是默认停止点**。不因某个子任务完成就停下。
-- **对话用于编排，工件才是事实**。
-- **验证优于乐观**。Builder 不能自我验收。
-- **Subagent 是执行者，不是自治者**。主 agent 拥有最终验证、守卫、commit 权限和持久记录。
-
-## 三点五、版本轨道
-
-- **当前稳定基线**：`harness.js v4`
-- **下一版本轨道**：`v5 Continue Gate + Pivot`
-- **v5 目标**：堵住“最终 oracle 未通过但先进入汇报模式”的侧门；失败后默认继续修复，连续两轮无新证据时自动换策略并告知 Boss。
-- **当前实现状态**：已落地 v5-preview 闭环：`harness.js` 现在支持 `goal_closed` 显式输入与回填、跨轮 `evidenceDelta` / `noEvidenceRounds` / `pivot_required` 判定、`--consume-result` 结果回灌到 ACTIVE + report、以及 `harness/artifacts/continue-gate/*.json` 状态工件。`--blocked-external` / `--blocked-approval` / `--goal-closed` / `--evidence-artifact` / `--result-status` / `--failure-type` 等输入会进入 continue-gate + report 结果链，而不再只是 scaffold 占位。
-- 设计入口：
-  - `skills/harness-dispatch/references/v5-continue-gate.md`
-  - `dev-project-harness-loop/references/v5-continue-gate.md`
+- ❌ `curl ... && echo "PASS"` — 自己说自己 pass
+- ❌ `grep "ok" output.txt` — 纯字符串匹配无外部裁判
+- ❌ agent 说"我检查过了，没问题" — 自我认可
+- ❌ 没有 negative test 的验收条件
+- ❌ 关键 milestone 前不跑 guard
 
 ---
 
-## 四、快速开始
+## 应用场景
 
-### 1. 安装技能
+### 场景 1：业务项目开发（PG / PGE-sprint）
+```
+Boss: "把我们那个 n8n workflow 重构一下"
+  → /harness "重构 n8n workflow，增加定时触发和中文输出"
+  → harness.js 自动发现项目、写合同、调度 subagent
+  → 每个 sprint 结束有 Verifier 独立验收
+  → 全程可回退、可 resume、可审计
+```
+
+### 场景 2：多 subagent 并行任务（Multi-Agent）
+```
+任务需要：前端 UI + 后端 API + 数据库迁移
+  → 一个 Planner 拆成 3 个独立 sprint
+  → 3 个 subagent 并行 build
+  → Planner 收集 handoff、跑 guard、统一 commit
+  → Boss 只看最终 milestone，不被中间过程打扰
+```
+
+### 场景 3：开源 skill 开发
+```
+目标：开发并发布一个新 skill 到 clawhub
+  → Solo 模式，harness 保证每个 bet 可验收
+  → guard 确保 skill 语法正确、文档完整
+  → commit 即发布准备完成状态
+```
+
+### 场景 4：Bug 修复 + 回归验证
+```
+Bug 报告 → 写 test first → 修复 → oracle 验证 test 通过
+  → negative test：故意破坏后 oracle 报错
+  → 全程有 evidence artifact 可审计
+```
+
+---
+
+## 安装方式
+
+### 方式 1：安装到 Agent Workspace（推荐）
 
 ```bash
-# 安装到 workspace-level（推荐）
-bash scripts/install_skills.sh --agent <your-agent-id>
-# 含 subagent-coding-lite
-bash scripts/install_skills.sh --agent <your-agent-id> --with-subagent-lite
+# 克隆仓库
+git clone https://github.com/ericmr1981/agent-harness-trinity.git
+cd agent-harness-trinity
 
-# 安装到全局 skills（需手动同步）
+# 安装核心技能（dev-project-harness-loop + autoloop + guards）
+bash scripts/install_skills.sh --agent jarvis
+
+# 安装完整套件（含 subagent-coding-lite）
+bash scripts/install_skills.sh --agent jarvis --with-subagent-lite
+```
+
+安装后技能位于：`~/.openclaw/agents/<agent-id>/workspace/skills/`
+
+### 方式 2：安装到全局 OpenClaw Skills（所有 agent 共享）
+
+```bash
 bash scripts/install_skills.sh --dest /usr/local/lib/node_modules/openclaw/skills/
 ```
 
-### 2. 为项目搭建 harness（首次）
+### 方式 3：为新项目搭建 Harness
 
 ```bash
 cd /path/to/your/project
 bash /path/to/agent-harness-trinity/project-harness-guards/scripts/scaffold_harness.sh
-```
-
-### 3. 使用 harness 工作
-
-**方式 A — 主 session 自治**（适合不需要 subagent 的任务）：
-直接阅读 `dev-project-autoloop/SKILL.md` 或 `dev-project-harness-loop/SKILL.md`，按bounded bet loop 执行。
-
-**方式 B — 通过 harness-dispatch 调度 subagent**（强制入口）：
-```
-/harness <任务描述>
-```
-harness-dispatch 会：动态发现项目 → LLM 任务分析 → 生成 sprint 计划 → 按依赖顺序 spawn subagent。
-
----
-
-## 五、harness-dispatch 调用流程（v3）
-
-```
-用户 /harness <task>
-    │
-    ▼
-harness-dispatch SKILL.md  ← 【强制门卫，所有 subagent 必须过这里】
-    │
-    ▼
-harness.js v3
-    ├── discoverProject()        动态发现项目（TASKS.md → ACTIVE.md → github-scan）
-    ├── scanRepo()               扫描 repo 结构
-    ├── analyzeTaskWithLLM()     LLM 任务分析 + 生成增强 brief
-    ├── handleClarification()     缺失信息时提问 Boss
-    ├── generateSprintPlan()     生成单/多 agent sprint 计划（含依赖链）
-    ├── dispatchSprints()        按依赖顺序 spawn subagent
-    └── Formal failure recovery  L0/L1/L2 分级重试
-    │
-    ▼
-inject 到 subagent 的 artifacts：
-    1. dev-project-harness-loop/SKILL.md
-    2. subagent-coding-lite/SKILL.md
-    3. subagent-coding-lite/TEMPLATE_ASSIGNMENT.md
-    4. subagent-coding-lite/TEMPLATE_HANDOFF.md
-    5. agency-agents-lib/agents/<role>.md
-    6. （可选）sprint contract
-```
-
-**关于 Telegram 上的 session mode**：
-- `mode="session"` 需要 `thread=true`，仅 Discord 支持
-- **Telegram 强制使用 `mode="run"`**，否则产生 zombie session
-
----
-
-## 六、核心技能关系
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              dev-project-harness-loop                    │
-│  【完整操作系统】：合同优先 + 守卫验证 + 持久记录        │
-│  包含 autoloop + 包含 guards                             │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-         ┌─────────┴──────────┐
-         ▼                     ▼
-┌─────────────────┐  ┌──────────────────────────┐
-│ dev-project-     │  │ project-harness-guards     │
-│ autoloop         │  │ 【脚手架 + 守卫】           │
-│ 【执行循环】      │  │ scripts/:                  │
-│ bounded bet loop │  │   scaffold_harness.sh     │
-│ verify oracle   │  │   run_change_guard.sh      │
-│ commit/log      │  │   run_drift_check.sh      │
-└─────────────────┘  └──────────────────────────┘
-
-subagent-coding-lite ← 被 harness-dispatch 调用，按需注入 agency-agents-lib 角色
-agency-agents-lib    ← 专业角色库（engineering 26个 + design 8个）
+# 生成：CLAUDE.md, AGENTS.md, features.json, init.sh, harness.json, docs/, tests/
 ```
 
 ---
 
-## 七、推荐 artifacts 结构
+## 更新方式
 
+### 日常更新（推荐）
+
+每次 Trinity repo 有新 commit 后，在**任意机器**运行一行：
+
+```bash
+cd /path/to/agent-harness-trinity
+bash scripts/sync_skills.sh --sync
 ```
-harness/
-├── goal.md                    ← 最终目标、非目标、约束、审批边界
-├── spec.md                    ← 扩展的产品/实现规格（需要时）
-├── contracts/
-│   └── sprint-<id>.md         ← sprint 合同 / definition of done
-├── assignments/
-│   └── assign-<id>.md         ← 标准化的 assignment brief
-├── qa/
-│   └── sprint-<id>.md         ← evaluator 验证报告
-├── reports/
-│   └── sprint-<id>-report.md  ← dispatch scaffold / consumed result report
-├── artifacts/
-│   └── continue-gate/
-│       └── <sprint-id>.json   ← continue-gate + result backfill state snapshot
-└── handoffs/
-    └── handoff-<id>.md        ← session/subagent 交接
 
-artifacts/                     ← 项目级长日志、截图、trace（业务/实现证据）
-scripts/
-├── run_change_guard.sh
-└── run_drift_check.sh
+脚本自动：
+1. 拉取 GitHub latest commit SHA
+2. 对比本地每个 skill 文件的 SYNCTAG 版本
+3. SHA 不同 → 从 GitHub raw 下载并注入新版本标签
+4. 输出清晰对照表
+
+### 选项说明
+
+| 参数 | 作用 |
+|------|------|
+| `--dry-run` | 只看差异，不下载 |
+| `--sync` | 检查并更新 |
+| `--force` | 强制重写所有文件（含已同步的） |
+| `--global` | 更新 npm 全局 skill 目录 |
+| `--agent <name>` | 指定 agent workspace |
+
+### 示例
+
+```bash
+# 查看哪些文件需要更新
+bash scripts/sync_skills.sh --dry-run
+
+# 检查 + 更新 workspace skills
+bash scripts/sync_skills.sh --sync
+
+# 强制更新所有文件（用于强制同步）
+bash scripts/sync_skills.sh --sync --force
+
+# 更新全局 skills
+bash scripts/sync_skills.sh --sync --global
 ```
 
 ---
 
-## 八、最小可用流程
+## 快速开始
 
-1. 写 `harness/goal.md`
-2. 选 harness profile（`Solo` / `PG` / `PGE-final` / `PGE-sprint`）
-3. 建 `harness/contracts/<sprint-id>.md`
-4. 通过 `harness/assignments/<round-id>.md` 调度 bounded round
-5. Builder 返回 evidence + handoff
-6. Verifier 写 `harness/qa/<sprint-id>.md`
-7. Planner reconcile，除非 blocked 不主动停
+### 1. 写 Goal Contract
 
-详见：`dev-project-harness-loop/references/minimal-flow-example.md`
+在项目 `harness/goal.md` 写清楚：
+- 最终目标是什么
+- 什么算"完成了"
+- 审批边界（谁在什么情况下需要确认）
+
+### 2. 开 Sprint
+
+在 `harness/contracts/` 写 sprint 合同，必须包含：
+- L1 Oracle（工程验证命令，必须是外部可执行的）
+- L2 Oracle（用户场景验证）
+- **Negative test**：如果故意破坏这个功能，oracle 会报错吗？
+
+### 3. 执行 Bet
+
+按 bounded bet loop 执行：
+```
+选最高优先级任务 → 实现 → 跑 oracle → 记录 evidence → commit → 继续或停止
+```
+
+### 4. Guard 检查
+
+里程碑前必须跑：
+```bash
+bash scripts/run_change_guard.sh
+```
 
 ---
 
-## 九、Deployment Paths（安装路径对照表）
+## 核心技能
 
-### 核心技能
+| 技能 | 定位 |
+|------|------|
+| `dev-project-harness-loop` | 完整操作系统：合同优先 + 守卫验证 + 持久记录 |
+| `dev-project-autoloop` | 执行循环：Bounded bet loop，commit/log/oracle-first |
+| `project-harness-guards` | 脚手架 + 守卫：repo 初始化 + 变更守卫脚本 |
+| `subagent-coding-lite` *(扩展)* | subagent 规范：标准化 assignment/handoff/verification |
+| `harness-dispatch` *(扩展)* | 强制入口门卫：所有 subagent 调度必须走这里 |
+| `agency-agents-lib` *(扩展)* | 专业角色库：30+ 工程/设计角色定义 |
 
-| Repo 路径 | → 全局部署路径 |
-|-----------|---------------|
-| `dev-project-harness-loop/SKILL.md` | `/usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/SKILL.md` |
-| `dev-project-harness-loop/scripts/harness.js` | `/usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/harness.js` |
-| `dev-project-autoloop/SKILL.md` | `/usr/local/lib/node_modules/openclaw/skills/dev-project-autoloop/SKILL.md` |
-| `project-harness-guards/SKILL.md` | `/usr/local/lib/node_modules/openclaw/skills/project-harness-guards/SKILL.md` |
+---
 
-### 扩展技能
+## 文件结构
 
-| Repo 路径 | → 全局部署路径 |
-|-----------|---------------|
-| `subagent-coding-lite/SKILL.md` | `/usr/local/lib/node_modules/openclaw/skills/subagent-coding-lite/SKILL.md` |
-| `subagent-coding-lite/TEMPLATE_*.md` | `/usr/local/lib/node_modules/openclaw/skills/subagent-coding-lite/TEMPLATE_*.md` |
-| `harness-dispatch/SKILL.md` | `/usr/local/lib/node_modules/openclaw/skills/harness-dispatch/SKILL.md` |
-| `harness-dispatch/references/` | `/usr/local/lib/node_modules/openclaw/skills/harness-dispatch/references/` |
-| `agency-agents-lib/` | `/usr/local/lib/node_modules/openclaw/skills/agency-agents-lib/` |
+```
+agent-harness-trinity/
+├── CLAUDE.md                          ← 项目使命
+├── dev-project-harness-loop/          ← 核心执行环路
+│   ├── SKILL.md
+│   ├── scripts/harness.js             ← /harness 命令引擎
+│   └── references/
+│       ├── sprint-contract-template.md ← 合同模板（含 Oracle 规则）
+│       ├── qa-report-template.md      ← Verifier 报告模板
+│       └── failure-recovery-protocol.md
+├── dev-project-autoloop/              ← 执行循环
+├── project-harness-guards/            ← 脚手架 + 守卫
+│   └── scripts/
+│       ├── scaffold_harness.sh        ← 生成完整 harness
+│       ├── run_change_guard.sh        ← drift check + test
+│       └── run_drift_check.sh         ← 必需文件检查
+├── subagent-coding-lite/              ← subagent 调度规范
+├── harness-dispatch/                  ← subagent 强制门卫
+├── skills/agency-agents-lib/          ← 30+ 专业角色库
+├── scripts/
+│   ├── install_skills.sh              ← repo → workspace 同步
+│   └── sync_skills.sh                 ← GitHub → 本地增量更新
+└── tests/smoke.sh                     ← 冒烟测试
+```
 
-### References
+---
 
-| Repo 路径 | → 全局部署路径 |
-|-----------|---------------|
-| `dev-project-harness-loop/references/*.md` | `.../skills/dev-project-harness-loop/references/*.md` |
-| `subagent-coding-lite/references/*.md` | `.../skills/subagent-coding-lite/references/*.md` |
+## 版本信息
 
-> **注意**：全局路径（`/usr/local/lib/node_modules/openclaw/skills/`）为权威运行时位置。Workspace 路径（`~/.openclaw/agents/<agent-id>/workspace/skills/`）不覆盖全局。全局永远优先。
+- **稳定基线**：`harness.js v4`
+- **预览轨道**：`v5 Continue Gate + Pivot`（已落地）
+- **当前 commit**：`aa1c7a5`
 
 ---
 
