@@ -1,0 +1,6 @@
+{
+  "initCommand": "bash init.sh",
+  "testCommand": "bash scripts/run_trinity_guard.sh",
+  "e2eCommand": "bash scripts/scaffold_harness.sh --help",
+  "acceptanceSummary": "7 个必需文件存在 + run_trinity_guard.sh 全通过 + scaffold_harness.sh 可调用"
+}

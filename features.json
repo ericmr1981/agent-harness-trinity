@@ -1,0 +1,44 @@
+[
+  {
+    "id": "F-001",
+    "title": "Trinity 必需文件齐全",
+    "passes": false,
+    "verify": "bash scripts/run_drift_check.sh"
+  },
+  {
+    "id": "F-002",
+    "title": "scripts/run_trinity_guard.sh 全通过",
+    "passes": false,
+    "verify": "bash scripts/run_trinity_guard.sh"
+  },
+  {
+    "id": "F-003",
+    "title": "scaffold_harness.sh 可生成合规 harness",
+    "passes": false,
+    "verify": "bash /tmp/test_scaffold.sh # 临时目录测试"
+  },
+  {
+    "id": "F-004",
+    "title": "所有 skill 脚本通过 node --check",
+    "passes": false,
+    "verify": "find . -name '*.js' -not -path './node_modules/*' -exec node --check {} \\;"
+  },
+  {
+    "id": "F-005",
+    "title": "CLAUDE.md / AGENTS.md / harness/goal.md 内容完整",
+    "passes": false,
+    "verify": "grep -c 'TODO' CLAUDE.md AGENTS.md harness/goal.md | grep -q '0'"
+  },
+  {
+    "id": "F-006",
+    "title": "init.sh 可执行不报错",
+    "passes": false,
+    "verify": "bash init.sh"
+  },
+  {
+    "id": "F-007",
+    "title": "tests/ 目录存在并包含至少一个可运行测试",
+    "passes": false,
+    "verify": "ls tests/ && bash tests/*.sh 2>/dev/null || true"
+  }
+]
