@@ -21,16 +21,19 @@ function has(name) {
   return process.argv.includes(name);
 }
 
-const repo = arg('--repo') || process.cwd();
-const name = arg('--name') || path.basename(repo);
+const repoArg = arg('--repo');
+const nameArg = arg('--name');
+
+// Default base for local project folders
+const DEFAULT_GITHUB_ROOT = process.env.GITHUB_ROOT || '/Users/ericmr/Documents/GitHub';
+
+// If --repo is not provided, default to "$GITHUB_ROOT/<name>" (Way #1)
+const name = nameArg || (repoArg ? path.basename(repoArg) : 'new-project');
+const repo = repoArg || path.join(DEFAULT_GITHUB_ROOT, name);
+
 const desc = arg('--desc') || '';
 const stack = (arg('--stack') || 'mixed').toLowerCase();
 const mode = (arg('--mode') || 'lean').toLowerCase();
-
-if (!repo) {
-  console.error('❌ Missing --repo');
-  process.exit(2);
-}
 
 const now = new Date();
 const ts = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -41,6 +44,12 @@ async function exists(p) {
 
 async function ensureDir(p) {
   await fs.mkdir(p, { recursive: true });
+}
+
+async function ensureRepoRoot(repoPath) {
+  // We deliberately do NOT run `git init` here.
+  // Kickoff should be safe to run on an empty directory.
+  await ensureDir(repoPath);
 }
 
 async function writeIfMissing(filePath, content) {
@@ -79,6 +88,7 @@ function featuresJsonTemplate() {
 }
 
 async function main() {
+  await ensureRepoRoot(repo);
   const outputs = [];
 
   outputs.push(await writeIfMissing(path.join(repo, 'docs/kickoff/PRD.md'), prdTemplate()));

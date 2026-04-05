@@ -16,6 +16,10 @@ Use: **`/Kickoff <project>`**
 
 ### Deterministic CLI (preferred)
 ```bash
+# Recommended (Way #1): only provide --name; repo defaults to "$GITHUB_ROOT/<project-name>"
+node project-kickoff/scripts/kickoff.js --name "<project-name>" --desc "<1-2 line description>"
+
+# Optional: override repo location
 node project-kickoff/scripts/kickoff.js --repo "/abs/path/to/repo" --name "<project-name>" --desc "<1-2 line description>"
 ```
 
