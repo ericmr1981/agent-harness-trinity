@@ -13,7 +13,7 @@
  */
 
 import { readFile, writeFile, mkdir, readdir, stat } from 'fs/promises';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -22,8 +22,8 @@ const __dirname = path.dirname(__filename);
 
 const CONTEXT_DIR = 'harness/context';
 // ─── CLI-overridable limits ───────────────────────────────────
-const MAX_FILE_SIZE_KB_DEFAULT = 8;   // skip files > N KB
-const MAX_FILES_READ_DEFAULT   = 12;  // max source files to include
+const MAX_FILE_SIZE_KB_DEFAULT = 16;   // inline preview only if <= N KB (large files use snippet extraction)
+const MAX_FILES_READ_DEFAULT   = 12;  // max source files to include (previews + snippet sources)
 const MAX_DIFF_LINES_DEFAULT    = 60;  // max git diff lines
 const MAX_LOG_ENTRIES_DEFAULT   = 5;   // max git log entries
 const MAX_CHARS_DEFAULT         = 0;   // 0 = no cap; set via --max-chars
@@ -64,17 +64,17 @@ export async function run(repoPath, taskDescription, overrides = {}) {
   console.log(`   Limits: maxFiles=${limits.maxFiles} maxFileSizeKb=${limits.maxFileSizeKb} maxChars=${limits.maxChars || 'none'}`);
 
   // Gather all context sections in parallel
-  const [gitState, featuresState, contractsState, handoffsState, activeState, srcFiles] = await Promise.all([
+  const [gitState, featuresState, contractsState, handoffsState, activeState, relevant] = await Promise.all([
     gatherGitState(workDir, limits),
     gatherFeatures(workDir),
     gatherContracts(workDir),
     gatherHandoffs(workDir),
     gatherActive(workDir),
-    gatherRelevantSources(workDir, task, limits),
+    gatherRelevantMaterials(workDir, task, limits),
   ]);
 
   // Build package
-  const pkg = buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, srcFiles, limits });
+  const pkg = buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, relevant, limits });
 
   // Write file
   const contextDir = path.join(workDir, CONTEXT_DIR);
@@ -83,7 +83,7 @@ export async function run(repoPath, taskDescription, overrides = {}) {
   await writeFile(outPath, pkg);
 
   console.log(`   ✅ Context package: ${outPath}`);
-  console.log(`   Size: ${pkg.length} chars | Source files: ${srcFiles.length} included`);
+  console.log(`   Size: ${pkg.length} chars | Previews: ${relevant.previews.length} | Snippet files: ${relevant.snippets.length}`);
 
   return outPath;
 }
@@ -197,46 +197,164 @@ async function gatherActive(repoPath) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Section 6: Relevant source files
+// Section 6: Relevant materials (previews + snippet extraction)
 // ─────────────────────────────────────────────────────────────
-async function gatherRelevantSources(repoPath, task, limits) {
+async function gatherRelevantMaterials(repoPath, task, limits) {
   const keywords = extractKeywords(task);
-  const candidates = [];
 
-  // Find source files
-  let srcFiles = [];
-  try {
-    const output = execSync(
-      `find "${repoPath}" -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.go" -o -name "*.java" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" 2>/dev/null`,
-      { encoding: 'utf8', timeout: 10000 }
-    );
-    srcFiles = output.split('\n').filter(Boolean);
-  } catch (_) {}
+  // A) Small file previews (code-first, fast)
+  const previewCandidates = await findFiles(repoPath, [
+    '*.ts','*.tsx','*.js','*.jsx','*.py','*.go','*.java'
+  ], {
+    exclude: ['*/node_modules/*','*/.git/*','*/dist/*','*/build/*'],
+    timeoutMs: 12000
+  });
 
-  // Score each file by keyword match
-  for (const fp of srcFiles) {
-    const basename = path.basename(fp).toLowerCase();
-    let score = 0;
-    for (const kw of keywords) {
-      if (basename.includes(kw)) score += 2;
-    }
-    if (score > 0) candidates.push({ fp, score });
-  }
+  const scored = previewCandidates
+    .map(fp => ({ fp, score: scoreByBasename(fp, keywords) }))
+    .filter(x => x.score > 0)
+    .sort((a,b) => b.score - a.score)
+    .slice(0, limits.maxFiles);
 
-  // Sort by score, take top N
-  candidates.sort((a, b) => b.score - a.score);
-  const selected = candidates.slice(0, limits.maxFiles);
-
-  // Read file contents (skip large files)
-  const results = [];
-  for (const { fp } of selected) {
+  const previews = [];
+  for (const { fp } of scored) {
     try {
       const s = await stat(fp);
-      if (s.size > limits.maxFileSizeKb * 1024) continue;
+      if (s.size > limits.maxFileSizeKb * 1024) continue; // large code file: don't inline
       const raw = await readFile(fp, 'utf8');
-      const rel = path.relative(repoPath, fp);
-      results.push({ path: rel, preview: raw.slice(0, 800) });
+      previews.push({ path: path.relative(repoPath, fp), preview: raw.slice(0, 800) });
     } catch (_) {}
+  }
+
+  // B) Snippet extraction (docs + large files)
+  // Goal: never inject huge docs verbatim; extract only relevant windows.
+  const snippets = await extractRelevantSnippets(repoPath, keywords, {
+    maxFiles: Math.min(6, limits.maxFiles),
+    maxSnippetsPerFile: 3,
+    contextLines: 20,
+    maxTotalChars: 8000,
+    timeoutMs: 12000
+  });
+
+  return { previews, snippets };
+}
+
+async function findFiles(repoPath, globs, { exclude = [], timeoutMs = 10000 } = {}) {
+  const findParts = globs.map(g => `-name "${g}"`).join(' -o ');
+  const excludeParts = exclude.map(p => `! -path "${p}"`).join(' ');
+  const cmd = `find "${repoPath}" -type f \\( ${findParts} \\) ${excludeParts} 2>/dev/null`;
+  try {
+    const output = execSync(cmd, { encoding: 'utf8', timeout: timeoutMs });
+    return output.split('\n').filter(Boolean);
+  } catch (_) {
+    return [];
+  }
+}
+
+function scoreByBasename(fp, keywords) {
+  const basename = path.basename(fp).toLowerCase();
+  let score = 0;
+  for (const kw of keywords) if (basename.includes(kw)) score += 2;
+  return score;
+}
+
+async function extractRelevantSnippets(repoPath, keywords, opts) {
+  if (!keywords || keywords.length === 0) return [];
+
+  // Build a safe-ish OR pattern for ripgrep.
+  const escaped = keywords
+    .filter(k => k.length >= 3)
+    .slice(0, 12)
+    .map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (escaped.length === 0) return [];
+  const pattern = escaped.join('|');
+
+  // Search docs (no full inline): exclude obvious noise.
+  const rgArgs = [
+    '--no-heading',
+    '--line-number',
+    '--ignore-case',
+    '--max-count', '200',
+    '--glob', '!*node_modules/**',
+    '--glob', '!*dist/**',
+    '--glob', '!*build/**',
+    '--glob', '!*\\.git/**',
+    '--glob', '*.md',
+    '--glob', '*.txt',
+    '--glob', '*.mdx',
+    pattern,
+    repoPath
+  ];
+
+  let hits = [];
+  try {
+    const out = execFileSync('rg', rgArgs, { encoding: 'utf8', timeout: opts.timeoutMs || 12000 });
+    // format: path:line:match
+    hits = out.split('\n').filter(Boolean).map(line => {
+      const m = line.match(/^(.*?):(\d+):(.*)$/);
+      if (!m) return null;
+      return { file: m[1], line: parseInt(m[2], 10), text: m[3] };
+    }).filter(Boolean);
+  } catch (_) {
+    return [];
+  }
+
+  // Group by file, score by hit count.
+  const byFile = new Map();
+  for (const h of hits) {
+    const key = h.file;
+    if (!byFile.has(key)) byFile.set(key, []);
+    byFile.get(key).push(h);
+  }
+
+  const rankedFiles = [...byFile.entries()]
+    .map(([file, arr]) => ({ file, hits: arr, score: arr.length }))
+    .sort((a,b) => b.score - a.score)
+    .slice(0, opts.maxFiles || 6);
+
+  const results = [];
+  let totalChars = 0;
+
+  for (const rf of rankedFiles) {
+    if (totalChars >= (opts.maxTotalChars || 8000)) break;
+
+    let raw = '';
+    try {
+      raw = await readFile(rf.file, 'utf8');
+    } catch (_) {
+      continue;
+    }
+    const lines = raw.split(/\r?\n/);
+
+    const hitLines = [...new Set(rf.hits.map(h => h.line))].sort((a,b) => a-b).slice(0, opts.maxSnippetsPerFile || 3);
+    const windows = [];
+
+    for (const ln of hitLines) {
+      const start = Math.max(1, ln - (opts.contextLines || 20));
+      const end = Math.min(lines.length, ln + (opts.contextLines || 20));
+      windows.push({ start, end });
+    }
+
+    // Merge overlapping windows
+    windows.sort((a,b) => a.start - b.start);
+    const merged = [];
+    for (const w of windows) {
+      const last = merged[merged.length - 1];
+      if (!last || w.start > last.end + 1) merged.push({ ...w });
+      else last.end = Math.max(last.end, w.end);
+    }
+
+    const rel = path.relative(repoPath, rf.file);
+    for (const w of merged) {
+      if (totalChars >= (opts.maxTotalChars || 8000)) break;
+
+      const chunk = lines.slice(w.start - 1, w.end).join('\n');
+      // Estimate contribution to the final markdown size without risking template-literal backtick issues.
+      const header = '### `' + rel + '` (lines ' + w.start + '-' + w.end + ')';
+      const estimated = header.length + chunk.length + 16; // fences + spacing
+      totalChars += estimated;
+      results.push({ path: rel, startLine: w.start, endLine: w.end, snippet: chunk });
+    }
   }
 
   return results;
@@ -258,7 +376,7 @@ function extractKeywords(task) {
 // ─────────────────────────────────────────────────────────────
 // Build the context package markdown
 // ─────────────────────────────────────────────────────────────
-function buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, srcFiles, limits }) {
+function buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, relevant, limits }) {
   const lines = [];
 
   lines.push(`# Context Package`);
@@ -276,7 +394,7 @@ function buildPackage({ workDir, task, timestamp, gitState, featuresState, contr
   }
   lines.push('');
   if (gitState.log) {
-    lines.push(`## 📜 Recent Commits (last ${MAX_LOG_ENTRIES})`);
+    lines.push(`## 📜 Recent Commits (last ${limits.maxLogEntries})`);
     lines.push('```');
     lines.push(gitState.log);
     lines.push('```');
@@ -329,11 +447,36 @@ function buildPackage({ workDir, task, timestamp, gitState, featuresState, contr
     lines.push('');
   }
 
-  // ── Relevant Source Files ──────────────────────────────────
-  if (srcFiles.length > 0) {
-    lines.push(`## 📂 Relevant Source Files (task keywords matched)`);
+  // ── Relevant Snippets (docs/large files, extracted windows) ─
+  if (relevant?.snippets?.length > 0) {
+    lines.push(`## ✂️  Relevant Snippets (extracted; large docs are NOT inlined)`);
+    lines.push(`> If more context is needed, request specific files/sections; do not ask for “the whole doc”.`);
     lines.push('');
-    for (const { path: fp, preview } of srcFiles) {
+
+    // Group snippets by file
+    const byFile = new Map();
+    for (const s of relevant.snippets) {
+      if (!byFile.has(s.path)) byFile.set(s.path, []);
+      byFile.get(s.path).push(s);
+    }
+
+    for (const [fp, arr] of byFile.entries()) {
+      lines.push(`### \`${fp}\``);
+      for (const snip of arr) {
+        lines.push(`#### lines ${snip.startLine}-${snip.endLine}`);
+        lines.push('```');
+        lines.push(snip.snippet);
+        lines.push('```');
+        lines.push('');
+      }
+    }
+  }
+
+  // ── Small File Previews (inline only if small) ──────────────
+  if (relevant?.previews?.length > 0) {
+    lines.push(`## 📂 Relevant Small File Previews (keyword matched; size-capped)`);
+    lines.push('');
+    for (const { path: fp, preview } of relevant.previews) {
       lines.push(`### \`${fp}\``);
       lines.push('```');
       lines.push(preview);
