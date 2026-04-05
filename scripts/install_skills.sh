@@ -68,6 +68,7 @@ skills=(
   "dev-project-autoloop"
   "project-harness-guards"
   "dev-project-harness-loop"
+  "project-kickoff"
 )
 
 if [[ "$WITH_SUBAGENT_LITE" -eq 1 ]]; then

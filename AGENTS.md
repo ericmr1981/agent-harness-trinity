@@ -11,6 +11,10 @@ Keep this file short (~100 lines).
 - Architecture rules: docs/architecture.md
 - Quality/tech debt: docs/quality.md
 
+## Commands
+- **`/Kickoff <project>`**: Generate early-stage docs (PRD + architecture draft + ADR) and bootstrap goal/feature checklist.
+- **`/harness <task>`**: Generate sprint contracts + dispatch plan for implementation work.
+
 ## Default loop
 1) Read CLAUDE.md + harness/goal.md + CHANGELOG.md
 2) Pick one bounded bet that most reduces distance to the final goal
