@@ -253,6 +253,113 @@ function getNonCodeFiles() {
   return found;
 }
 
+function topGroupForPath(relPath, depth = 2) {
+  const normalized = relPath.replace(/^\.\//, '');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length === 0) return '(root)';
+  if (parts.length === 1) return parts[0];
+  return parts.slice(0, Math.min(depth, parts.length)).join('/');
+}
+
+function classifyArtifact(relPath) {
+  const p = relPath.replace(/^\.\//, '');
+  const base = path.basename(p);
+
+  if (/^harness\/(artifacts|reports|context|qa)\//.test(p) || ['ACTIVE.md', 'CHANGELOG.md', 'features.json', 'HARNESS_LINKS.md'].includes(p)) {
+    return '记录 / 状态层';
+  }
+  if (/^harness\/contracts\//.test(p) || /^.*TEMPLATE_.*\.md$/.test(base) || /template/i.test(base) || ['harness/goal.md', 'harness/handoff.md', 'harness.json'].includes(p)) {
+    return '合同 / 模板层';
+  }
+  if (/^tests\//.test(p) || /^.*run_.*guard\.sh$/.test(base) || base === 'smoke.sh' || /rubrics\//.test(p)) {
+    return '验证 / 守卫层';
+  }
+  if (/^.*\/scripts\//.test(p) || /^scripts\//.test(p) || base === 'init.sh') {
+    return '执行 / 编排层';
+  }
+  if (base === 'SKILL.md' || /\/SKILL\.md$/.test(p) || /^skills\//.test(p) || /^kickoff\//.test(p) || /^harness\//.test(p) && base === 'SKILL.md') {
+    return '技能 / 入口层';
+  }
+  if (/^docs\//.test(p) || /^.*\/references\//.test(p) || ['README.md', 'MAP.md', 'AGENTS.md', 'CLAUDE.md'].includes(p)) {
+    return '文档 / 导航层';
+  }
+  if (/\.(ts|tsx|js|jsx|go|py)$/.test(p)) {
+    return '源码 / 逻辑层';
+  }
+  return '其他';
+}
+
+function buildRoleMap(files, nonCodeFiles) {
+  const buckets = new Map();
+  const allPaths = [
+    ...files.map(f => f.replace(/^\.\//, '')),
+    ...nonCodeFiles.map(f => f.path),
+  ];
+
+  for (const relPath of allPaths) {
+    const layer = classifyArtifact(relPath);
+    if (!buckets.has(layer)) buckets.set(layer, []);
+    buckets.get(layer).push(relPath);
+  }
+
+  return [...buckets.entries()].map(([layer, items]) => ({
+    layer,
+    count: items.length,
+    examples: items.sort().slice(0, 5),
+  }));
+}
+
+function extractDocCrossRefs(files, nonCodeFiles) {
+  const textFiles = [
+    ...nonCodeFiles.map(f => f.path),
+    ...files.map(f => f.replace(/^\.\//, '')).filter(p => /\.(sh|md|json|ya?ml)$/.test(p)),
+  ];
+  const candidatePaths = [...new Set([
+    ...files.map(f => f.replace(/^\.\//, '')),
+    ...nonCodeFiles.map(f => f.path),
+  ])].sort((a, b) => b.length - a.length);
+
+  const edges = [];
+  const seen = new Set();
+
+  for (const src of [...new Set(textFiles)]) {
+    const abs = path.join(repoPath, src);
+    if (!fs.existsSync(abs)) continue;
+    let content = '';
+    try {
+      content = fs.readFileSync(abs, 'utf8');
+    } catch (_) {
+      continue;
+    }
+
+    const srcGroup = topGroupForPath(src);
+    for (const target of candidatePaths) {
+      if (target === src) continue;
+      if (!content.includes(target)) continue;
+      const dstGroup = topGroupForPath(target);
+      if (srcGroup === dstGroup) continue;
+      const key = `${srcGroup} → ${dstGroup}`;
+      if (seen.has(`${src}::${target}`)) continue;
+      seen.add(`${src}::${target}`);
+      edges.push({ source: srcGroup, target: dstGroup, via: src, path: target, key });
+    }
+  }
+
+  const grouped = new Map();
+  for (const edge of edges) {
+    if (!grouped.has(edge.key)) grouped.set(edge.key, { source: edge.source, target: edge.target, via: new Set(), paths: new Set() });
+    grouped.get(edge.key).via.add(edge.via);
+    grouped.get(edge.key).paths.add(edge.path);
+  }
+
+  return [...grouped.values()].map(item => ({
+    source: item.source,
+    target: item.target,
+    via: [...item.via].slice(0, 2),
+    paths: [...item.paths].slice(0, 3),
+  })).slice(0, 30);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Import extraction
 // ─────────────────────────────────────────────────────────────
@@ -537,6 +644,8 @@ async function buildCodemap() {
   const xrefs = extractCrossRefs(files, relMap);
   const dirTree = getDirTree(3);
   const nonCodeFiles = getNonCodeFiles();
+  const roleMap = buildRoleMap(files, nonCodeFiles);
+  const docCrossRefs = extractDocCrossRefs(files, nonCodeFiles);
 
   const NODE_BUILTINS = new Set([
     'fs', 'path', 'os', 'stream', 'buffer', 'util', 'crypto', 'events', 'net', 'http', 'https',
@@ -595,6 +704,17 @@ async function buildCodemap() {
     lines.push('');
   }
 
+  if (roleMap.length > 0) {
+    lines.push(`## 职责分层（Role Map）`);
+    lines.push('');
+    lines.push(`| 层级 | 数量 | 代表文件 |`);
+    lines.push(`|------|------|----------|`);
+    for (const item of roleMap) {
+      lines.push(`| ${item.layer} | ${item.count} | ${item.examples.map(p => `\`${p}\``).join('<br>')} |`);
+    }
+    lines.push('');
+  }
+
   if (entries.length > 0) {
     lines.push(`## 入口文件`);
     lines.push('');
@@ -631,12 +751,23 @@ async function buildCodemap() {
   }
 
   if (xrefs.length > 0) {
-    lines.push(`## 跨目录引用（Top-level）`);
+    lines.push(`## 跨目录引用（代码导入）`);
     lines.push('');
     lines.push(`| Cross-reference |`);
     lines.push(`|------------------|`);
     for (const x of xrefs) {
       lines.push(`| ${x} |`);
+    }
+    lines.push('');
+  }
+
+  if (docCrossRefs.length > 0) {
+    lines.push(`## 跨目录引用（文档 / 脚本显式提及）`);
+    lines.push('');
+    lines.push(`| Source | Target | Via | Paths |`);
+    lines.push(`|--------|--------|-----|-------|`);
+    for (const ref of docCrossRefs) {
+      lines.push(`| ${ref.source} | ${ref.target} | ${ref.via.map(v => `\`${v}\``).join('<br>')} | ${ref.paths.map(p => `\`${p}\``).join('<br>')} |`);
     }
     lines.push('');
   }
@@ -676,8 +807,10 @@ async function buildCodemap() {
   lines.push(`- 新增 API 先查路由表，避免冲突`);
   lines.push(`- 新增 model 先查数据模型，确认已有类型`);
   lines.push(`- Debug 时先看跨目录引用，定位传播路径`);
+  lines.push(`- 先看职责分层，再决定是改执行层、合同层、记录层还是守卫层`);
   if (isSkillOrHarness) {
     lines.push(`- 本仓库为 **skill / harness** 类型，重点关注 \`SKILL.md\`、\`harness/\` 目录和关键配置文件`);
+    lines.push(`- 改动脚本前，优先检查它是否被文档 / 模板 / guard 链路显式引用`);
   }
   lines.push('');
 
@@ -693,9 +826,11 @@ async function buildCodemap() {
   const meta = {
     commit: currentCommit,
     generatedAt: Date.now(),
-    version: 2,
+    version: 3,
     trackedSrcCount,
     repoProfile,
+    roleLayers: roleMap.length,
+    docCrossRefs: docCrossRefs.length,
   };
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2), 'utf8');
 
@@ -705,7 +840,9 @@ async function buildCodemap() {
   console.log(`   Routes found: ${routes.length}`);
   console.log(`   Models found: ${models.length}`);
   console.log(`   External deps: ${extDeps.length}`);
-  console.log(`   Cross-refs: ${xrefs.length}`);
+  console.log(`   Cross-refs (code): ${xrefs.length}`);
+  console.log(`   Cross-refs (doc/script): ${docCrossRefs.length}`);
+  console.log(`   Role layers: ${roleMap.length}`);
   console.log(`   Non-code key files: ${nonCodeFiles.length}`);
 }
 

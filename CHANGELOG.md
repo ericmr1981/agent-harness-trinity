@@ -1,5 +1,25 @@
 # Progress Log
 
+## 2026-04-09夜 — CodeMap 3.0 进行中：职责分层 + 文档/脚本跨目录引用
+**status:** in progress (local verified, records syncing)
+
+**已完成：**
+- 在 `codemap.js` 上叠加 CodeMap 3.0 主能力：
+  - `buildRoleMap()`：按 **技能/入口层、执行/编排层、合同/模板层、记录/状态层、验证/守卫层、文档/导航层** 分类仓库职责
+  - `extractDocCrossRefs()`：扫描文档/脚本中对 repo 内路径的显式提及，生成“文档 / 脚本跨目录引用”关系
+  - `topGroupForPath()` / `classifyArtifact()`：把路径映射成更稳定的结构分组和职责层级
+- 本地强制生成验证结果：
+  - `roleLayers: 7`
+  - `docCrossRefs: 30`
+  - 无 `PATCH /path` / 假 `Server Component` 回归
+- 这意味着 CodeMap 已不只是目录页，而开始具备“作战地图”能力
+
+**待完成：**
+- 最终 guard / record 收尾
+- 如 Boss 同意，再 commit + push
+
+---
+
 ## 2026-04-09晚 — CodeMap 2.0 升级：消除假阳性 + 新增 skill/harness 仓库画像支持
 **commit:** `dff2269` (HEAD)
 
