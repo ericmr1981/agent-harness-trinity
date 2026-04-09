@@ -1,42 +1,49 @@
-# ACTIVE.md — agent-harness-trinity
+# ACTIVE.md — Current WIP
 
-> 完全 Trinity-compliant ✅ | 2026-04-04
+> Repo-local source of truth for the next bounded bet.
 
-## 项目性质
-Trinity 技能套件主仓（meta-project，非业务项目）
+## Current Project
+- **Name**: agent-harness-trinity
+- **Repo**: /Users/ericmr/Documents/GitHub/agent-harness-trinity
+- **Objective**: Close the remaining local record drift after the v5-preview Continue Gate work, with special focus on the `codemap.js` cache statistic (`trackedSrcCount`) and repo truth sync.
+- **Status**: running
+- **Started**: 2026-04-09 20:30 GMT+8
 
-## 状态
-**✅ goal_closed** — gap 已消除，完全合规
+## Current Bet
+- **Bet**: Reproduce the `trackedSrcCount` mismatch, fix it in `dev-project-harness-loop/scripts/codemap.js`, re-run Trinity guards/smoke, and sync `ACTIVE.md` / `CHANGELOG.md` / `features.json`.
+- **Why this bet**: Repo health checks were green, but durable records were stale and the codemap cache statistic was still suspected to be wrong.
 
-## 已关闭 gap
-- ✅ CLAUDE.md、AGENTS.md、features.json、init.sh、harness.json
-- ✅ docs/architecture.md、docs/quality.md
-- ✅ tests/smoke.sh（可运行）
-- ✅ scripts/run_drift_check.sh、scripts/run_change_guard.sh
-- ✅ harness/goal.md、harness/handoff.md（已重新填充内容）
+## Oracle
+- `node dev-project-harness-loop/scripts/codemap.js . --output harness/artifacts/codemap.md`
+- `bash scripts/run_drift_check.sh`
+- `bash scripts/run_trinity_guard.sh`
+- `bash init.sh`
+- `bash tests/smoke.sh`
+- temp scaffold smoke via `project-harness-guards/scripts/scaffold_harness.sh --install-guards`
+- temp git worktree clean/dirty codemap cache replay
 
-## 验证结果（2026-04-04）
-```
-bash scripts/run_trinity_guard.sh  → ✅ GUARD PASSED
-bash scripts/run_drift_check.sh    → [OK] drift check passed
-bash init.sh                       → [OK] init done
-node --check harness.js            → OK
-git commit adc99b8                 → 13 files, +408 lines
-```
+## Result
+- **Outcome**: goal_closed
+- **Current Blocker**: None
+- **Stop Allowed**: yes
+- **Next Bet**: Optional only — commit/push the current local reconciliation if Boss wants the repo history updated immediately.
 
-## 关键文件
-| 文件 | 说明 |
-|------|------|
-| `CLAUDE.md` | 项目使命 + 验收目标 |
-| `harness/goal.md` | Goal Contract |
-| `features.json` | 7 项特性检查清单 |
-| `harness.json` | init/test/e2e 命令 |
-| `init.sh` | Node 版本检查 + 语法检查 |
-| `tests/smoke.sh` | 冒烟测试 |
-| `scripts/run_trinity_guard.sh` | Trinity 完整守卫 |
+## Evidence
+- `trackedSrcCount` was reproduced as incorrect (`135`) and fixed to tracked source count (`9`)
+- clean worktree second codemap run skips correctly; dirty tracked source forces rebuild
+- `bash scripts/run_drift_check.sh` → passed
+- `bash scripts/run_trinity_guard.sh` → passed
+- `bash init.sh` → passed
+- `bash tests/smoke.sh` → passed
+- temp scaffold smoke → passed
+- durable logs: `harness/artifacts/verification/2026-04-09-codemap-and-guard-summary.md`
 
-## Master Brief
-`harness/assignments/master-brief-1775059063335.md`
+## Files Touched This Round
+- `dev-project-harness-loop/scripts/codemap.js`
+- `.gitignore`
+- `ACTIVE.md`
+- `CHANGELOG.md`
+- `features.json`
 
 ---
-*Last updated: 2026-04-04 08:58 GMT+8*
+*Last updated: 2026-04-09 20:43 GMT+8*

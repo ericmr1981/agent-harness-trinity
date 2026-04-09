@@ -356,7 +356,9 @@ async function buildCodemap() {
 
   const isGitRepo = safeRun('git rev-parse --is-inside-work-tree 2>/dev/null') === 'true';
   const trackedSrcCount = isGitRepo
-    ? parseInt(safeRun(`git ls-files | grep -vcx -e 'codemap.md' -e 'harness/' 2>/dev/null`) || '0')
+    ? parseInt(
+        safeRun("git ls-files 2>/dev/null | grep -vE '^(harness/artifacts/|codemap\\.md$)' | grep -cE '\\.(ts|tsx|js|jsx|go|py)$'") || '0'
+      )
     : 0;
 
   if (!FORCE && fs.existsSync(OUT) && fs.existsSync(META_FILE)) {

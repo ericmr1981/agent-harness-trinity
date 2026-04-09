@@ -16,5 +16,8 @@ WORKSPACE.md
 harness/context/
 harness/reports/
 harness/artifacts/continue-gate/
+harness/artifacts/codemap.md
+harness/artifacts/codemap.meta.json
+harness/artifacts/verification/
 harness/assignments/master-brief-*.md
 harness/contracts/sprint-1.md
