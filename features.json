@@ -40,5 +40,11 @@
     "title": "tests/ 目录存在并包含至少一个可运行测试",
     "passes": true,
     "verify": "bash tests/smoke.sh"
+  },
+  {
+    "id": "F-008",
+    "title": "codemap.js v2: 无假阳性 + repo profile 检测 + 非源码关键文件清单",
+    "passes": true,
+    "verify": "node dev-project-harness-loop/scripts/codemap.js . --force --output harness/artifacts/codemap.md && rg 'PATCH /path|Server Component' harness/artifacts/codemap.md && exit 1 || exit 0"
   }
 ]

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
  * codemap.js — Build a project CodeMap artifact for Trinity harness
- * 
+ *
  * Phase 1.5: Pre-Research structural indexing
  * Run after scanRepo, before task analysis.
- * 
+ *
  * Output: harness/artifacts/codemap.md
- * 
+ *
  * Usage:
  *   node codemap.js /path/to/repo [--output /path/to/output.md]
+ *   node codemap.js /path/to/repo --force
  */
 
 import { execSync } from 'child_process';
@@ -49,33 +50,117 @@ function safeRun(cmd) {
   }
 }
 
+/**
+ * Strip comments from JS/TS/Go source so that regex patterns
+ * don't fire on comment examples (e.g. "patch(" in a comment
+ * should not be detected as a route).
+ */
+function stripComments(content, ext) {
+  if (ext === '.py') {
+    // Remove triple-quoted docstrings first
+    content = content.replace(/'''[\s\S]*?'''/g, '');
+    content = content.replace(/"""[\s\S]*?"""/g, '');
+    // Remove # line comments
+    content = content.replace(/#.*$/gm, '');
+  } else {
+    // Remove block comments (/* ... */) — handles multi-line
+    content = content.replace(/\/\*[\s\S]*?\*\//g, '');
+    // Remove // line comments
+    content = content.replace(/\/\/.*$/gm, '');
+  }
+  return content;
+}
+
+/**
+ * Check if content has a real "use server" directive.
+ * Only true when the directive appears as a bare string literal
+ * on its own line at the top of the file — not inside comments.
+ */
+function isRealUseServerDirective(content) {
+  // Take first non-empty line after stripping block comments
+  const stripped = stripComments(content, '.js');
+  const lines = stripped.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    // A bare 'use server' or "use server" on its own line
+    if (/^['"]use server['"]\s*[;,]?\s*$/.test(trimmed)) return true;
+    // Skip shebang, import/export, declare, or anything else
+    if (!/^['"]use server['"]$/.test(trimmed)) break;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Repo profile detection
+// ─────────────────────────────────────────────────────────────
+function detectRepoProfile() {
+  const hasSkillMd = fs.existsSync(path.join(repoPath, 'SKILL.md'));
+  const hasAgentsMd = fs.existsSync(path.join(repoPath, 'AGENTS.md'));
+  const hasHarnessDir = fs.existsSync(path.join(repoPath, 'harness'));
+  const hasSubagentLite = fs.existsSync(path.join(repoPath, 'subagent-coding-lite'));
+  const hasPackageJson = fs.existsSync(path.join(repoPath, 'package.json'));
+  const hasReadme = fs.existsSync(path.join(repoPath, 'README.md'));
+  const hasMapMd = fs.existsSync(path.join(repoPath, 'MAP.md'));
+
+  const isSkillOrHarness = hasSkillMd || (hasHarnessDir && hasAgentsMd);
+  const isOpenClawAgent = hasSkillMd && hasAgentsMd;
+  const isMultiAgentTeam = hasSubagentLite || hasHarnessDir;
+
+  let profile = 'generic';
+  if (isOpenClawAgent) profile = 'OpenClaw agent workspace';
+  else if (isMultiAgentTeam) profile = 'multi-agent harness';
+  else if (isSkillOrHarness) profile = 'skill / harness module';
+  else if (hasReadme || hasMapMd) profile = 'documentation / knowledge base';
+  else if (hasPackageJson) profile = 'Node.js application';
+  else profile = 'unclassified';
+
+  return { profile, isSkillOrHarness };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Framework detection (app repos)
+// ─────────────────────────────────────────────────────────────
 function detectFramework() {
   const pkg = safeRun('cat package.json');
-  if (!pkg) return { framework: 'unknown', language: 'unknown' };
+  if (!pkg) return { framework: 'unknown', language: 'unknown', profile: 'non-app repo' };
   try {
     const pj = JSON.parse(pkg);
     const deps = { ...(pj.dependencies || {}), ...(pj.devDependencies || {}) };
     const pkgJsonDeps = Object.keys(deps);
-    // Ink is a React-based CLI renderer — distinct from web React
     if (pkgJsonDeps.includes('ink') && pkgJsonDeps.includes('react')) {
-      return { framework: 'Node.js/Ink (CLI)', language: 'TypeScript' };
+      return { framework: 'Node.js/Ink (CLI)', language: 'TypeScript', profile: 'app' };
     }
-    if (pkgJsonDeps.includes('next')) return { framework: 'Next.js', language: 'TypeScript' };
-    if (pkgJsonDeps.includes('fastify')) return { framework: 'Fastify', language: 'TypeScript' };
-    if (pkgJsonDeps.includes('express')) return { framework: 'Express', language: 'TypeScript' };
-    if (pkgJsonDeps.includes('react') && !pkgJsonDeps.includes('ink')) return { framework: 'React (web)', language: 'JavaScript' };
-    if (pkgJsonDeps.includes('vue')) return { framework: 'Vue', language: 'JavaScript' };
-    if (pkgJsonDeps.includes('nestjs') || pkgJsonDeps.includes('@nestjs/common')) return { framework: 'NestJS', language: 'TypeScript' };
-    if (pkgJsonDeps.includes('telegram-bot-api') || pkgJsonDeps.includes('node-telegram-bot-api')) return { framework: 'Node.js/Telegram Bot', language: 'TypeScript' };
-    if (pj.require?.module === 'go') return { framework: 'Go', language: 'Go' };
-    return { framework: 'Node.js', language: 'TypeScript' };
+    if (pkgJsonDeps.includes('next')) return { framework: 'Next.js', language: 'TypeScript', profile: 'app' };
+    if (pkgJsonDeps.includes('fastify')) return { framework: 'Fastify', language: 'TypeScript', profile: 'app' };
+    if (pkgJsonDeps.includes('express')) return { framework: 'Express', language: 'TypeScript', profile: 'app' };
+    if (pkgJsonDeps.includes('react') && !pkgJsonDeps.includes('ink')) {
+      return { framework: 'React (web)', language: 'JavaScript', profile: 'app' };
+    }
+    if (pkgJsonDeps.includes('vue')) return { framework: 'Vue', language: 'JavaScript', profile: 'app' };
+    if (pkgJsonDeps.includes('nestjs') || pkgJsonDeps.includes('@nestjs/common')) {
+      return { framework: 'NestJS', language: 'TypeScript', profile: 'app' };
+    }
+    if (pkgJsonDeps.includes('telegram-bot-api') || pkgJsonDeps.includes('node-telegram-bot-api')) {
+      return { framework: 'Node.js/Telegram Bot', language: 'TypeScript', profile: 'app' };
+    }
+    if (pj.require?.module === 'go') return { framework: 'Go', language: 'Go', profile: 'app' };
+    return { framework: 'Node.js', language: 'TypeScript', profile: 'app' };
   } catch (_) {
-    return { framework: 'unknown', language: 'unknown' };
+    return { framework: 'unknown', language: 'unknown', profile: 'app' };
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Directory tree
+// ─────────────────────────────────────────────────────────────
 function getDirTree(depth = 3) {
-  const raw = safeRun(`find . -type d -not -path './node_modules/*' -not -path './.git/*' -not -path './dist/*' -not -path './build/*' -not -path './__pycache__/*' -not -path './.next/*' -not -path './coverage/*' -not -path './dist_prod/*' 2>/dev/null`);
+  const raw = safeRun(
+    `find . -type d -not -path './node_modules/*' -not -path './.git/*' ` +
+    `-not -path './dist/*' -not -path './build/*' -not -path './__pycache__/*' ` +
+    `-not -path './.next/*' -not -path './coverage/*' -not -path './dist_prod/*' ` +
+    `2>/dev/null`
+  );
   const entries = raw.split('\n').filter(Boolean).map(f => {
     if (f.startsWith('/')) {
       const rel = path.relative(repoPath, f);
@@ -83,13 +168,11 @@ function getDirTree(depth = 3) {
     }
     return f;
   });
-  const dirs = entries;
-  const maxDepth = Math.max(...dirs.map(d => d.split('/').length - 1));
+  const maxDepth = Math.max(...entries.map(d => d.split('/').length - 1), 0);
   const displayDepth = Math.min(depth, maxDepth);
-  
-  // Build tree structure
+
   const tree = {};
-  for (const dir of dirs) {
+  for (const dir of entries) {
     const parts = dir.replace(/^\.\//, '').split('/');
     let node = tree;
     for (let i = 0; i < parts.length && i < displayDepth; i++) {
@@ -115,12 +198,17 @@ function getDirTree(depth = 3) {
   return printTree(tree).join('\n');
 }
 
+// ─────────────────────────────────────────────────────────────
+// Source file discovery
+// ─────────────────────────────────────────────────────────────
 function getSrcFiles() {
-  const output = safeRun(`find . -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.py" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" 2>/dev/null | head -2000`);
+  const output = safeRun(
+    `find . -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.py" \\) ` +
+    `! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" ` +
+    `2>/dev/null | head -2000`
+  );
   return output.split('\n').filter(Boolean).map(f => {
-    // normalize: resolve symlinks in the full path so path.relative works correctly
     if (f.startsWith('/')) {
-      // f is an absolute path from find; resolve it through any symlinks
       const resolved = fs.realpathSync(f) || f;
       const rel = path.relative(repoPath, resolved);
       return rel.startsWith('./') ? rel : './' + rel;
@@ -129,10 +217,48 @@ function getSrcFiles() {
   });
 }
 
+/**
+ * Scan for key non-code files (markdown, shell, yaml, json configs).
+ * Returns an array of { path, type, purpose } entries.
+ */
+function getNonCodeFiles() {
+  const keyPatterns = [
+    // Root-level project docs
+    { pattern: 'README.md', type: 'md', purpose: '项目说明' },
+    { pattern: 'AGENTS.md', type: 'md', purpose: 'Agent 工作区定义' },
+    { pattern: 'CLAUDE.md', type: 'md', purpose: '项目使命宪章' },
+    { pattern: 'MAP.md', type: 'md', purpose: '文件关系图' },
+    { pattern: 'CHANGELOG.md', type: 'md', purpose: '变更日志' },
+    { pattern: 'features.json', type: 'json', purpose: 'Feature 检查清单' },
+    { pattern: 'harness.json', type: 'json', purpose: 'Harness 配置' },
+    { pattern: 'package.json', type: 'json', purpose: 'npm / Node.js 配置' },
+    { pattern: '.gitignore', type: 'config', purpose: 'Git 忽略规则' },
+    // Skill / harness specific
+    { pattern: 'SKILL.md', type: 'md', purpose: 'Skill 定义' },
+    { pattern: 'init.sh', type: 'sh', purpose: '初始化脚本' },
+    { pattern: 'tests/smoke.sh', type: 'sh', purpose: '冒烟测试' },
+    // Directory-level configs
+    { pattern: 'harness/goal.md', type: 'md', purpose: 'Goal 合同' },
+    { pattern: 'harness/handoff.md', type: 'md', purpose: 'Handoff 文档' },
+    { pattern: '.github/workflows/ci.yml', type: 'yml', purpose: 'CI 工作流' },
+    { pattern: 'HARNESS_LINKS.md', type: 'md', purpose: 'Harness 链接映射' },
+  ];
+
+  const found = [];
+  for (const { pattern, type, purpose } of keyPatterns) {
+    if (fs.existsSync(path.join(repoPath, pattern))) {
+      found.push({ path: pattern, type, purpose });
+    }
+  }
+  return found;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Import extraction
+// ─────────────────────────────────────────────────────────────
 function extractImports(files) {
-  const importMap = {}; // file → [imported modules]
-  const moduleImports = {}; // imported module → [files that import it]
-  const relMap = {}; // file → [local file imports]
+  const relMap = {};
+  const moduleImports = {};
 
   for (const file of files) {
     const relPath = file.replace(/^\.\//, '');
@@ -141,7 +267,6 @@ function extractImports(files) {
       const localImports = [];
       const moduleImportList = [];
 
-      // ES module imports: import x from '...' / import '...'
       const esMatches = content.matchAll(/import\s+(?:[\w*{}\s,]+\s+from\s+)?['"]([^'"]+)['"]/g);
       for (const m of esMatches) {
         const imp = m[1];
@@ -152,7 +277,6 @@ function extractImports(files) {
         }
       }
 
-      // CommonJS requires: require('...')
       const cjsMatches = content.matchAll(/require\(['"]([^'"]+)['"]\)/g);
       for (const m of cjsMatches) {
         const imp = m[1];
@@ -163,14 +287,10 @@ function extractImports(files) {
         }
       }
 
-      // Deduplicate
-      const uniqLocal = [...new Set(localImports)];
-      const uniqMod = [...new Set(moduleImportList)];
-
-      if (uniqLocal.length > 0 || uniqMod.length > 0) {
-        relMap[relPath] = uniqLocal;
+      if (localImports.length > 0 || moduleImportList.length > 0) {
+        relMap[relPath] = localImports;
       }
-      for (const mod of uniqMod) {
+      for (const mod of [...new Set(moduleImportList)]) {
         if (!moduleImports[mod]) moduleImports[mod] = [];
         moduleImports[mod].push(relPath);
       }
@@ -180,28 +300,47 @@ function extractImports(files) {
   return { relMap, moduleImports };
 }
 
+// ─────────────────────────────────────────────────────────────
+// API route extraction (false-positive resistant)
+// ─────────────────────────────────────────────────────────────
 function extractApiRoutes(files) {
   const routes = [];
+
   for (const file of files) {
     const relPath = file.replace(/^\.\//, '');
     if (relPath.includes('node_modules')) continue;
+
+    // Skip files whose basename is the codemap script itself
+    // (the word "patch" appears in a comment inside codemap.js — don't pick it up)
+    const basename = path.basename(relPath);
+    if (basename === 'codemap.js' || basename === 'codemap.ts') continue;
+
+    const ext = path.extname(relPath);
     try {
       const content = fs.readFileSync(path.join(repoPath, relPath), 'utf8');
+      // Use stripped content so comment examples don't fire false positives
+      const sc = stripComments(content, ext);
 
-      // Fastify route patterns: fastify.get|post|put|delete|patch(path, ...
-      const fastifyMatches = content.matchAll(/(?:fastify|app|router)\.(get|post|put|delete|patch|head|options)\(['"]([^'"]+)['"]/gi);
-      for (const m of fastifyMatches) {
+      // Fastify / Express — require that the first token before the dot
+      // is a known variable name (not a comment artifact)
+      const httpMatches = [...sc.matchAll(/(?:fastify|app|router)\.(get|post|put|delete|patch|head|options)\(['"]([^'"]+)['"]/gi)];
+      for (const m of httpMatches) {
+        // Filter out obvious path strings that aren't HTTP routes
+        const routePath = m[2];
+        if (/^['"]\/|^['"]\w+(\/\w+)*['"]$/.test(routePath) && routePath.length < 200) {
+          routes.push({ method: m[1].toUpperCase(), path: routePath, file: relPath });
+        }
+      }
+
+      // NestJS decorators
+      const nestMatches = [...sc.matchAll(/@(Get|Post|Put|Delete|Patch|Head|Options)\(['"]([^'"]+)['"]/g)];
+      for (const m of nestMatches) {
         routes.push({ method: m[1].toUpperCase(), path: m[2], file: relPath });
       }
 
-      // Express route patterns: app.get|post|router.get|post(path, ...
-      const expressMatches = content.matchAll(/(?:app|router)\.(get|post|put|delete|patch|head|options)\(['"]([^'"]+)['"]/gi);
-      for (const m of expressMatches) {
-        routes.push({ method: m[1].toUpperCase(), path: m[2], file: relPath });
-      }
-
-      // Next.js API routes: pages/api/**/*.ts or app/api/**/*.ts
-      if ((relPath.includes('pages/api') || relPath.includes('app/api')) && (relPath.endsWith('.ts') || relPath.endsWith('.js') || relPath.endsWith('.tsx'))) {
+      // Next.js API routes
+      if ((relPath.includes('pages/api') || relPath.includes('app/api')) &&
+          (ext === '.ts' || ext === '.js' || ext === '.tsx')) {
         const nextPath = relPath
           .replace('pages/api/', '/')
           .replace('app/api/', '/')
@@ -209,23 +348,15 @@ function extractApiRoutes(files) {
           .replace(/\[([^\]]+)\]/g, ':$1');
         routes.push({ method: 'GET/POST/PUT/DELETE', path: nextPath, file: relPath });
       }
-
-      // NestJS decorators: @Get|@Post|@Put|@Delete|@Patch('path')
-      const nestMatches = content.matchAll(/@(Get|Post|Put|Delete|Patch|Head|Options)\(['"]([^'"]+)['"]/g);
-      for (const m of nestMatches) {
-        routes.push({ method: m[1].toUpperCase(), path: m[2], file: relPath });
-      }
-
-      // Go router: http.MethodFunc / chi / gorilla mux
-      const goMatches = content.matchAll(/(?:http\.HandleFunc|router\.(?:Handle|Method))\(['"]([^'"]+)['"]/gi);
-      for (const m of goMatches) {
-        routes.push({ method: '?', path: m[1], file: relPath });
-      }
     } catch (_) {}
   }
+
   return routes;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Model / type extraction
+// ─────────────────────────────────────────────────────────────
 function extractModels(files) {
   const models = [];
   const modelFilePatterns = [
@@ -236,30 +367,21 @@ function extractModels(files) {
   for (const file of files) {
     const relPath = file.replace(/^\.\//, '');
     if (relPath.includes('node_modules')) continue;
-    const isModelFile = modelFilePatterns.some(p => p.test(relPath));
 
     try {
       const content = fs.readFileSync(path.join(repoPath, relPath), 'utf8');
-
-      // TypeScript interfaces and types
       const tsInterfaces = [...content.matchAll(/export\s+(?:interface|type)\s+(\w+)/g)];
       for (const m of tsInterfaces) {
         models.push({ name: m[1], kind: m[0].startsWith('interface') ? 'interface' : 'type', file: relPath });
       }
-
-      // Go structs
       const goStructs = [...content.matchAll(/type\s+(\w+)\s+struct\s*\{/g)];
       for (const m of goStructs) {
         models.push({ name: m[1], kind: 'struct', file: relPath });
       }
-
-      // Python dataclasses / pydantic
       const pyClasses = [...content.matchAll(/class\s+(\w+).*\(.*(?:Base|Model|Schema|Config)/g)];
       for (const m of pyClasses) {
         models.push({ name: m[1], kind: 'class', file: relPath });
       }
-
-      // Zod schemas
       const zodSchemas = [...content.matchAll(/export\s+(?:const|let)\s+(\w+)\s*=\s*(?:z\.object|z\.create)/g)];
       for (const m of zodSchemas) {
         models.push({ name: m[1], kind: 'zod schema', file: relPath });
@@ -267,7 +389,7 @@ function extractModels(files) {
     } catch (_) {}
   }
 
-  // Also flag model-like files even if no specific types found
+  // Also flag model-like files even if no types found
   for (const file of files) {
     const relPath = file.replace(/^\.\//, '');
     if (modelFilePatterns.some(p => p.test(relPath)) && !models.some(m => m.file === relPath)) {
@@ -278,42 +400,56 @@ function extractModels(files) {
   return models;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Entry point extraction
+// ─────────────────────────────────────────────────────────────
 function extractEntryPoints(files) {
   const entries = [];
+
   for (const file of files) {
     const relPath = file.replace(/^\.\//, '');
     if (relPath.includes('node_modules')) continue;
+
     try {
       const content = fs.readFileSync(path.join(repoPath, relPath), 'utf8');
+      const basename = path.basename(relPath);
 
-      // package.json main / exports
-      if (relPath === 'package.json') {
-        const pj = JSON.parse(content);
-        if (pj.main) entries.push({ name: 'main', path: pj.main, purpose: 'Application entry' });
-        if (pj.exports) entries.push({ name: 'exports', path: '(see exports field)', purpose: 'Package exports' });
-        if (pj.bin) entries.push({ name: 'bin', path: pj.bin, purpose: 'CLI bin entry' });
+      // package.json — main / exports / bin
+      if (basename === 'package.json') {
+        try {
+          const pj = JSON.parse(content);
+          if (pj.main) entries.push({ name: 'main', path: relPath, purpose: 'Application entry' });
+          if (pj.exports) entries.push({ name: 'exports', path: relPath, purpose: 'Package exports' });
+          if (pj.bin) entries.push({ name: 'bin', path: relPath, purpose: 'CLI bin entry' });
+        } catch (_) {}
       }
 
-      // Common entry point patterns
-      const entryPatterns = ['index.ts', 'index.js', 'main.ts', 'main.js', 'app.ts', 'app.js', 'server.ts', 'server.js', 'cli.ts', 'cli.js'];
-      if (entryPatterns.includes(path.basename(relPath))) {
-        entries.push({ name: path.basename(relPath), path: relPath, purpose: 'Likely entry point' });
+      // Common CLI / server entry point names
+      const entryPatterns = ['main.ts', 'main.js', 'app.ts', 'app.js', 'server.ts', 'server.js', 'cli.ts', 'cli.js', 'index.ts', 'index.js'];
+      if (entryPatterns.includes(basename)) {
+        entries.push({ name: basename, path: relPath, purpose: 'Likely entry point' });
       }
 
-      // "use server" / "use client" directives (Next.js)
-      if (content.includes("'use server'") || content.includes('"use server"')) {
-        entries.push({ name: path.basename(relPath), path: relPath, purpose: 'Server Component' });
+      // Real "use server" directive (not from comments)
+      if (basename.endsWith('.js') || basename.endsWith('.ts') || basename.endsWith('.tsx')) {
+        if (isRealUseServerDirective(content)) {
+          entries.push({ name: basename, path: relPath, purpose: 'Next.js Server Component' });
+        }
       }
     } catch (_) {}
   }
+
   return entries;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Cross-reference extraction
+// ─────────────────────────────────────────────────────────────
 function extractCrossRefs(files, importRelMap) {
-  // Map each file (without ./) to its group
   const GROUP_DEPTH = 2;
   const SKIP_TOP = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '__pycache__', '.next']);
   const fileToGroup = {};
+
   for (const file of files) {
     const rp = file.replace(/^\.\//, '');
     const parts = rp.split('/');
@@ -323,21 +459,25 @@ function extractCrossRefs(files, importRelMap) {
     if (grp.includes('.')) continue;
     fileToGroup[rp] = grp;
   }
-  const groups = [...new Set(Object.values(fileToGroup))].sort();
 
+  const groups = [...new Set(Object.values(fileToGroup))].sort();
   const xrefs = [];
   const seen = new Set();
+
   for (const [file, locals] of Object.entries(importRelMap)) {
     const grpA = fileToGroup[file];
     if (!grpA) continue;
     for (const imp of locals) {
-      const abs = path.join(repoPath, path.dirname(file), imp);
-      let absResolved;
-      try { absResolved = fs.realpathSync(abs); } catch (_) { absResolved = abs; }
-      const rel = path.relative(repoPath, absResolved);
+      let abs;
+      try {
+        abs = fs.realpathSync(path.join(repoPath, path.dirname(file), imp));
+      } catch (_) {
+        abs = path.join(repoPath, path.dirname(file), imp);
+      }
+      const rel = path.relative(repoPath, abs);
       const grpB = rel.split('/').slice(0, GROUP_DEPTH).join('/');
       if (grpB !== grpA && groups.includes(grpB)) {
-        const key = grpA + ' \u2192 ' + grpB;
+        const key = `${grpA} → ${grpB}`;
         if (!seen.has(key)) { seen.add(key); xrefs.push(key); }
       }
     }
@@ -350,7 +490,6 @@ function extractCrossRefs(files, importRelMap) {
 // Main
 // ─────────────────────────────────────────────────────────────
 async function buildCodemap() {
-  // ── Cache check ─────────────────────────────────────────────────────
   const FORCE = process.argv.includes('--force');
   const META_FILE = OUT.replace(/\.md$/, '.meta.json');
 
@@ -364,12 +503,10 @@ async function buildCodemap() {
   if (!FORCE && fs.existsSync(OUT) && fs.existsSync(META_FILE)) {
     try {
       const meta = JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
-      const currentCommit = safeRun('git rev-parse HEAD 2>/dev/null') || 'unknown';
-      // Rebuild on: modified tracked source files OR new untracked source files (excluding harness output)
+      const currentCommit = isGitRepo ? safeRun('git rev-parse HEAD 2>/dev/null') || 'unknown' : 'unknown';
       const dirtyTrackedSrc = isGitRepo
         ? safeRun("git diff --name-only 2>/dev/null | grep -cE '\\.(ts|tsx|js|jsx|go|py)$'").trim()
         : '0';
-      // Ignore codemap's own script / output files (always untracked in this workflow)
       const newUntrackedSrc = isGitRepo
         ? safeRun("git ls-files --others --exclude-standard 2>/dev/null | grep -vE 'codemap|\\.meta\\.json$' | grep -cE '\\.(ts|tsx|js|jsx|go|py)$'").trim()
         : '0';
@@ -382,16 +519,16 @@ async function buildCodemap() {
         const age = Date.now() - meta.generatedAt;
         const mins = Math.round(age / 60000);
         console.log(`⏭  CodeMap up-to-date (commit ${meta.commit?.substring(0, 7)}, ${mins}m ago) — skipping.`);
-        console.log(`   Run with --force to regenerate.`);
+        console.log('   Run with --force to regenerate.');
         return;
       }
-    } catch (_) { /* meta corrupt or unreadable, regenerate */ }
+    } catch (_) { /* regenerate on parse error */ }
   }
-  // ────────────────────────────────────────────────────────────────────
 
   console.log(`\n📍 Building CodeMap for: ${repoPath}\n`);
 
-  const frameworkInfo = detectFramework();
+  const { profile: repoProfile, isSkillOrHarness } = detectRepoProfile();
+  const { framework, language } = detectFramework();
   const files = getSrcFiles();
   const { relMap, moduleImports } = extractImports(files);
   const routes = extractApiRoutes(files);
@@ -399,24 +536,31 @@ async function buildCodemap() {
   const entries = extractEntryPoints(files);
   const xrefs = extractCrossRefs(files, relMap);
   const dirTree = getDirTree(3);
+  const nonCodeFiles = getNonCodeFiles();
 
-  // External dependencies (top-level, deduplicated)
-  const NODE_BUILTINS = new Set(['fs', 'path', 'os', 'stream', 'buffer', 'util', 'crypto', 'events', 'net', 'http', 'https', 'url', 'querystring', 'child_process', 'readline', 'zlib', 'assert', 'tty', 'domain', 'http2', 'perf_hooks', 'trace_events', 'v8', 'vm', 'wasi', 'natives', 'module', 'constants', 'sys', 'timers', 'dns', 'dgram', 'string_decoder', 'async_hooks', 'diagnostics_channel', 'worker_threads', 'shared_buffers', 'test', 'node-inspect', 'assert/strict', 'fs/promises', 'path/posix', 'path/win32', 'stream/promises', 'stream/consumers', 'stream/web', 'util/types']);
-  const INTERNAL_DIRS = new Set(['src', 'lib', 'app', 'models', 'services', 'routes', 'controllers', 'middleware', 'types', 'generated', 'dist', 'build', 'scripts', 'config', 'configs', 'utils', 'helpers']);
-  const extDeps = [...new Set(Object.keys(moduleImports))].filter(dep =>
-    !NODE_BUILTINS.has(dep) && !INTERNAL_DIRS.has(dep) && !dep.startsWith('.')
-  ).sort();
+  const NODE_BUILTINS = new Set([
+    'fs', 'path', 'os', 'stream', 'buffer', 'util', 'crypto', 'events', 'net', 'http', 'https',
+    'url', 'querystring', 'child_process', 'readline', 'zlib', 'assert', 'tty', 'domain', 'http2',
+    'perf_hooks', 'trace_events', 'v8', 'vm', 'wasi', 'natives', 'module', 'constants', 'sys',
+    'timers', 'dns', 'dgram', 'string_decoder', 'async_hooks', 'diagnostics_channel', 'worker_threads',
+    'shared_buffers', 'test', 'node-inspect', 'assert/strict', 'fs/promises', 'path/posix',
+    'path/win32', 'stream/promises', 'stream/consumers', 'stream/web', 'util/types',
+  ]);
+  const INTERNAL_DIRS = new Set([
+    'src', 'lib', 'app', 'models', 'services', 'routes', 'controllers', 'middleware',
+    'types', 'generated', 'dist', 'build', 'scripts', 'config', 'configs', 'utils', 'helpers',
+  ]);
+  const extDeps = [...new Set(Object.keys(moduleImports))]
+    .filter(dep => !NODE_BUILTINS.has(dep) && !INTERNAL_DIRS.has(dep) && !dep.startsWith('.'))
+    .sort();
 
-  // Git info
   const gitBranch = safeRun('git rev-parse --abbrev-ref HEAD 2>/dev/null') || 'unknown';
-  const gitLog = safeRun("git log --oneline -10 2>/dev/null") || 'no git history';
   const lastCommit = safeRun('git log -1 --format="%ai %s" 2>/dev/null') || 'unknown';
 
-  // Build markdown
   const lines = [];
   lines.push(`# CodeMap — 项目结构索引`);
   lines.push('');
-  lines.push(`> Auto-generated by codemap.js | ${new Date().toISOString()} | Framework: **${frameworkInfo.framework}** | Language: **${frameworkInfo.language}**`);
+  lines.push(`> Auto-generated by codemap.js | ${new Date().toISOString()} | **${repoProfile}** | Framework: **${framework}** | Language: **${language}**`);
   lines.push('');
   lines.push(`## 基础信息`);
   lines.push('');
@@ -426,17 +570,30 @@ async function buildCodemap() {
   lines.push(`| Git 分支 | \`${gitBranch}\` |`);
   lines.push(`| 最近提交 | ${lastCommit} |`);
   lines.push(`| 源码文件数 | ${files.length} |`);
-  lines.push(`| 框架 | ${frameworkInfo.framework} |`);
-  lines.push(`| 语言 | ${frameworkInfo.language} |`);
+  lines.push(`| 仓库画像 | ${repoProfile} |`);
+  lines.push(`| 框架 | ${framework} |`);
+  lines.push(`| 语言 | ${language} |`);
   lines.push('');
 
   lines.push(`## 目录结构（Depth ≤ 3）`);
   lines.push('');
-  lines.push(`\`\`\``);
-  lines.push(`.`);
+  lines.push('```');
+  lines.push('.');
   lines.push(dirTree);
-  lines.push(`\`\`\``);
+  lines.push('```');
   lines.push('');
+
+  // Key non-code files section — especially valuable for skill/harness repos
+  if (nonCodeFiles.length > 0) {
+    lines.push(`## 关键文件（含文档 / 配置）`);
+    lines.push('');
+    lines.push(`| 文件 | 类型 | 用途 |`);
+    lines.push(`|------|------|------|`);
+    for (const f of nonCodeFiles) {
+      lines.push(`| \`${f.path}\` | ${f.type} | ${f.purpose} |`);
+    }
+    lines.push('');
+  }
 
   if (entries.length > 0) {
     lines.push(`## 入口文件`);
@@ -487,9 +644,9 @@ async function buildCodemap() {
   if (extDeps.length > 0) {
     lines.push(`## 外部依赖（Top-level packages）`);
     lines.push('');
-    lines.push(`\`\`\`json`);
+    lines.push('```json');
     lines.push(JSON.stringify(extDeps, null, 2));
-    lines.push(`\`\`\``);
+    lines.push('```');
     lines.push('');
   }
 
@@ -519,28 +676,37 @@ async function buildCodemap() {
   lines.push(`- 新增 API 先查路由表，避免冲突`);
   lines.push(`- 新增 model 先查数据模型，确认已有类型`);
   lines.push(`- Debug 时先看跨目录引用，定位传播路径`);
+  if (isSkillOrHarness) {
+    lines.push(`- 本仓库为 **skill / harness** 类型，重点关注 \`SKILL.md\`、\`harness/\` 目录和关键配置文件`);
+  }
   lines.push('');
 
   const content = lines.join('\n');
 
-  // Ensure output directory exists
   const outDir = path.dirname(OUT);
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
   fs.writeFileSync(OUT, content, 'utf8');
 
-  // Write cache metadata
-  const currentCommit = safeRun('git rev-parse HEAD 2>/dev/null') || 'unknown';
-  const meta = { commit: currentCommit, generatedAt: Date.now(), version: 1, trackedSrcCount };
+  const currentCommit = isGitRepo ? safeRun('git rev-parse HEAD 2>/dev/null') || 'unknown' : 'unknown';
+  const meta = {
+    commit: currentCommit,
+    generatedAt: Date.now(),
+    version: 2,
+    trackedSrcCount,
+    repoProfile,
+  };
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2), 'utf8');
 
   console.log(`✅ CodeMap written to: ${OUT}`);
+  console.log(`   Repo profile: ${repoProfile}`);
   console.log(`   Files scanned: ${files.length}`);
   console.log(`   Routes found: ${routes.length}`);
   console.log(`   Models found: ${models.length}`);
   console.log(`   External deps: ${extDeps.length}`);
   console.log(`   Cross-refs: ${xrefs.length}`);
+  console.log(`   Non-code key files: ${nonCodeFiles.length}`);
 }
 
 buildCodemap().catch(err => {

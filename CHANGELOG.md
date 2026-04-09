@@ -1,5 +1,28 @@
 # Progress Log
 
+## 2026-04-09晚 — CodeMap 2.0 升级：消除假阳性 + 新增 skill/harness 仓库画像支持
+**commit:** `dff2269` (HEAD)
+
+**本轮完成：**
+- 重写 `dev-project-harness-loop/scripts/codemap.js`（v2），消除三大误报：
+  1. **API 路由误报**：新增 `stripComments()` 辅助函数，在正则提取路由之前先剥离 JS/TS/Go 代码注释；过滤掉 codemap 自身文件
+  2. **"use server" 误报**：改为只在首行真实指令中匹配（不再是注释中的字符串）
+  3. **路由字符串过滤**：增加了对路由路径格式的基本校验（长度 <200，前缀为 `/` 或合法 path）
+- **新增 `detectRepoProfile()`**：自动识别 skill/harness 仓库（检出 `multi-agent harness`）并写入元数据
+- **新增 `getNonCodeFiles()`**：扫描 14 类关键非源码文件（SKILL.md、AGENTS.md、harness/goal.md 等），对 skill/harness 仓库价值大幅提升
+- **新增 `repoProfile` 写入 codemap.meta.json**（version: 2）
+- `extractApiRoutes()` 和 `extractEntryPoints()` 均已改用清洗后的内容
+- 使用建议部分加入 skill/harness 仓库的专属提示
+
+**验证（均通过）：**
+- `node --check dev-project-harness-loop/scripts/codemap.js` → 通过
+- `node dev-project-harness-loop/scripts/codemap.js . --force --output harness/artifacts/codemap.md` → Routes found: 0（之前是 1 条误报），Repo profile: multi-agent harness，Non-code key files: 14
+- `bash scripts/run_drift_check.sh` → 通过
+- `bash scripts/run_trinity_guard.sh` → ✅ GUARD PASSED
+- `bash init.sh` → 通过
+
+---
+
 ## 2026-04-09 — 修正 codemap 统计漂移并同步仓库记录
 **refs:** `88d2529` (HEAD), `10f9847`
 
