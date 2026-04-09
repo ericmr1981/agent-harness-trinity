@@ -25,6 +25,7 @@ import { run as runContextAssembler } from './context-assembler/context-assemble
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const SCRIPT_DIR = __dirname;
 
 const WORKSPACE      = process.env.OPENCLAW_WORKSPACE || process.cwd();
 const HARNESS_DIR    = path.join(WORKSPACE, 'harness');
@@ -138,9 +139,23 @@ async function main() {
 
   // Step 2: Repo scan (skip in minimal mode)
   let scan = null;
+  let codemapPath = null;
   if (MODE_ARG !== 'minimal') {
     scan = await scanRepo(project.repoPath);
     tokenTrack.estimatedTokens += scan.srcFiles.length * 2; // trivial
+
+    // Step 2.5: Build CodeMap (project structure index)
+    const codemapArtifactDir = path.join(project.repoPath, 'harness', 'artifacts');
+    await mkdir(codemapArtifactDir, { recursive: true });
+    codemapPath = path.join(codemapArtifactDir, 'codemap.md');
+    try {
+      const codemapScript = path.join(SCRIPT_DIR, 'codemap.js');
+      execSync(`node "${codemapScript}" "${project.repoPath}" --output "${codemapPath}"`, { timeout: 120, cwd: project.repoPath });
+      console.log('📍 CodeMap generated: harness/artifacts/codemap.md');
+    } catch (e) {
+      console.warn('⚠️  CodeMap generation failed (non-fatal):', e.message);
+      codemapPath = null;
+    }
   }
 
   // Step 3: Complexity scoring (override or compute)
@@ -175,7 +190,7 @@ async function main() {
   const previousMasterConfig = await readPreviousMasterConfig();
 
   // Step 6: Sprint plan
-  const plan = await generateSprintPlan(taskDescriptionClean, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig);
+  const plan = await generateSprintPlan(taskDescriptionClean, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig, codemapPath);
 
   // Step 7: Dispatch (skip when only consuming result/backfill)
   if (!DRY_RUN && !CONSUME_RESULT) {
@@ -756,7 +771,7 @@ async function handleClarification(llmResult) {
 // ─────────────────────────────────────────────────────────────
 // STEP 5: Sprint plan (updated for v4)
 // ─────────────────────────────────────────────────────────────
-async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig = null) {
+async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig = null, codemapPath = null) {
   const sprints = [];
   const baseDir = path.join(HARNESS_DIR, 'contracts');
   await mkdir(baseDir, { recursive: true });
@@ -785,7 +800,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
         role: spec.role,
         scope: spec.scope,
         dependsOn: spec.dependsOn || [],
-        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints, matrixFlags, agent, continueGate),
+        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints, matrixFlags, agent, continueGate, codemapPath),
         agent: selectAgentFromId(spec.role),
         attachmentTier: scoreToAttachmentTier(complexity)
       });
@@ -797,7 +812,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       role: spec.role,
       scope: spec.scope,
       dependsOn: [],
-      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, [], matrixFlags, agent, continueGate),
+      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, [], matrixFlags, agent, continueGate, codemapPath),
       agent,
       attachmentTier: tier
     });
@@ -861,46 +876,29 @@ ${scan.topFiles.slice(0, 10).map(f => `- \`${f.rel}\` (${f.lines}L)`).join('\n')
   return brief;
 }
 
-function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, matrixFlags, agent, continueGate = null) {
+function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, matrixFlags, agent, continueGate = null, codemapPath = null) {
   const localOracle = continueGate?.localOracle || scan?.localOracle || '请参考项目实际构建命令';
-  const acceptanceSection = scan ? `## 验收
-\`\`\`bash
-cd "${project.repoPath}" && ${localOracle}
-\`\`\`` : '## 验收\n请参考项目实际构建命令';
+  const acceptanceSection = scan ? `## 验收\n\`\`\`bash\ncd "${project.repoPath}" && ${localOracle}\n\`\`\`` : '## 验收\n请参考项目实际构建命令';
 
-  const continueGateSection = continueGate ? `
-## Continue Gate (v5 preview)
-- **Final Oracle**: ${continueGate.finalOracle}
-- **Current Blocker**: ${continueGate.currentBlocker}
-- **Round Outcome**: ${continueGate.roundOutcome}
-- **Stop Allowed**: ${continueGate.stopAllowed}
-- **Next Forced Bet**: ${continueGate.nextForcedBet}
-- **Local Oracle**: ${continueGate.localOracle}
-- **Evidence Delta**: ${continueGate.evidenceDelta}
-- **No-Evidence Rounds**: ${continueGate.noEvidenceRounds}
-- **Last Evidence**: ${continueGate.lastEvidence || 'none yet'}
-- **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
-` : '';
+  const codemapSection = codemapPath
+    ? `\n## 项目全貌（必读）\n执行任何操作前，请先阅读项目结构索引：\n\`\`\`\nharness/artifacts/codemap.md\n\`\`\`\n其中包含：模块依赖图、API 路由表、数据模型清单、跨目录引用。这些信息对理解代码传播路径和定位 bug 至关重要。\n`
+    : '';
+
+  const continueGateSection = continueGate ? `\n## Continue Gate (v5 preview)\n- **Final Oracle**: ${continueGate.finalOracle}\n- **Current Blocker**: ${continueGate.currentBlocker}\n- **Round Outcome**: ${continueGate.roundOutcome}\n- **Stop Allowed**: ${continueGate.stopAllowed}\n- **Next Forced Bet**: ${continueGate.nextForcedBet}\n- **Local Oracle**: ${continueGate.localOracle}\n- **Evidence Delta**: ${continueGate.evidenceDelta}\n- **No-Evidence Rounds**: ${continueGate.noEvidenceRounds}\n- **Last Evidence**: ${continueGate.lastEvidence || 'none yet'}\n- **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch\n` : '';
 
   return `# Sprint Contract — ${spec.sprintId}
 
-## 任务
-${spec.scope}
+## 任务\n${spec.scope}${codemapSection}
 
-## 项目
-${project.displayName} | ${project.repoPath}
+## 项目\n${project.displayName} | ${project.repoPath}
 
-## Agent
-${spec.role}
-${matrixFlags.length > 0 ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}` : ''}${continueGateSection}
+## Agent\n${spec.role}\n${matrixFlags.length > 0 ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}` : ''}${continueGateSection}
 
-## 依赖
-${spec.dependsOn.length === 0 ? '_无_' : spec.dependsOn.map(d => `- ${d}`).join('\n')}
+## 依赖\n${spec.dependsOn.length === 0 ? '_无_' : spec.dependsOn.map(d => `- ${d}`).join('\n')}
 
 ${acceptanceSection}
 
-## 注意事项
-${llmResult?.enhancedBrief || ''}
+## 注意事项\n${llmResult?.enhancedBrief || ''}
 
 ---
 *Generated: ${new Date().toISOString()}*`;
