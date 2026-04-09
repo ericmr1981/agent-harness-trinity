@@ -43,6 +43,26 @@ harness-dispatch:
 
 ## 🚀 使用方式
 
+### 本地同步 Trinity 到 Jarvis（推荐）
+
+如果你刚把 `agent-harness-trinity` 更新到本地 repo，想让 Jarvis 运行时也立即对齐，直接执行：
+
+```bash
+cd /Users/ericmr/Documents/GitHub/agent-harness-trinity && git pull origin main && bash scripts/sync_skills.sh --sync && bash scripts/install_skills.sh --agent jarvis --with-subagent-lite
+```
+
+### 这条命令怎么理解
+
+- `git pull origin main`：更新本地 repo
+- `bash scripts/sync_skills.sh --sync`：增量同步带 SYNCTAG / manifest 的文件
+- `bash scripts/install_skills.sh --agent jarvis --with-subagent-lite`：整体覆盖 Jarvis workspace 下的核心 skills，避免“repo 已更新但运行态没完全跟上”
+
+### 如果只想先看差异
+
+```bash
+cd /Users/ericmr/Documents/GitHub/agent-harness-trinity && git pull origin main && bash scripts/sync_skills.sh --dry-run
+```
+
 ### 方式 1: OpenClaw 中直接使用（推荐）
 
 ```markdown

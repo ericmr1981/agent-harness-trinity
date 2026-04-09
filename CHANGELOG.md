@@ -1,5 +1,24 @@
 # Progress Log
 
+## 2026-04-09深夜 — 补充本地同步 runbook（repo → runtime）
+**status:** done
+
+**本轮完成：**
+- 在 `README.md` 的“更新方式”下新增 **一键同步到本地运行环境（推荐）**
+- 明确推荐命令：
+  - `git pull origin main`
+  - `bash scripts/sync_skills.sh --sync`
+  - `bash scripts/install_skills.sh --agent jarvis --with-subagent-lite`
+- 在 `HARNESS-INSTALL-GUIDE.md` 中补充“如何同步到 Jarvis 运行时”的解释与 dry-run 用法
+- 明确说明：
+  - `sync_skills.sh` 负责 manifest / SYNCTAG 管理的增量同步
+  - `install_skills.sh` 负责把核心 skill 目录整体补齐，避免 repo 与实际运行态不一致
+
+**验证：**
+- `rg -n "一键同步到本地运行环境|sync_skills\.sh --sync|install_skills\.sh --agent jarvis --with-subagent-lite" README.md HARNESS-INSTALL-GUIDE.md`
+
+---
+
 ## 2026-04-09夜 — CodeMap 3.0 进行中：职责分层 + 文档/脚本跨目录引用
 **status:** in progress (local verified, records syncing)
 

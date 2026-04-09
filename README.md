@@ -125,9 +125,27 @@ bash /path/to/agent-harness-trinity/project-harness-guards/scripts/scaffold_harn
 
 ## 更新方式
 
-### 日常更新（推荐）
+### 一键同步到本地运行环境（推荐）
 
-每次 Trinity repo 有新 commit 后，在**任意机器**运行一行：
+如果你既想拉取 repo 最新代码，又想把 OpenClaw 实际在用的本地 skills 一并更新，直接运行：
+
+```bash
+cd /Users/ericmr/Documents/GitHub/agent-harness-trinity && git pull origin main && bash scripts/sync_skills.sh --sync && bash scripts/install_skills.sh --agent jarvis --with-subagent-lite
+```
+
+**这条命令做了 3 件事：**
+1. `git pull origin main`：把 GitHub 上的 repo 更新拉到本地
+2. `sync_skills.sh --sync`：增量更新走 manifest / SYNCTAG 管理的 skill 文件
+3. `install_skills.sh --agent jarvis --with-subagent-lite`：把核心 skill 目录整体拷贝到 Jarvis workspace，补齐最后一公里（例如新增脚本、未纳入 manifest 的文件）
+
+**适用场景：**
+- 日常更新 Trinity
+- 刚 pull 完 repo，想让 Jarvis 立即用上最新版
+- 不想分辨某次改动到底该走 sync 还是 install
+
+### 日常更新（分步方式）
+
+如果你想分步执行，可以按下面顺序：
 
 ```bash
 cd /path/to/agent-harness-trinity
