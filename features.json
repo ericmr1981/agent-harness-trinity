@@ -102,5 +102,33 @@
       }
     ],
     "verify": "node --check dev-project-harness-loop/scripts/harness.js && node --check dev-project-harness-loop/scripts/context-assembler/context-assembler.js && rg 'buildFeatureOracle|Feature Acceptance Criteria|acceptanceCriteriaCount|FEATURE_ORACLE' dev-project-harness-loop/scripts/harness.js dev-project-harness-loop/scripts/context-assembler/context-assembler.js"
+  },
+  {
+    "id": "F-013",
+    "title": "sync_skills.sh 正确处理 untagged 文件并用 .synctag sidecar 跟踪版本",
+    "passes": true,
+    "priority": 13,
+    "size": "S",
+    "status": "done",
+    "dependsOn": [],
+    "notes": "Fix sync script false-positive update issue: untagged files now adopt on plain --sync, force really rewrites up-to-date files, and version tracking moved from inline comments to sidecar .synctag files so JS/JSON syntax is never polluted.",
+    "acceptanceCriteria": [
+      {
+        "id": "AC1",
+        "title": "untagged 文件在不加 --force 的 --sync 下会被收编并生成 .synctag",
+        "verify": "bash /tmp/trinity_sync_sidecar_validate.sh"
+      },
+      {
+        "id": "AC2",
+        "title": "--sync --force 会重写已 up-to-date 文件，清理遗留内联标签",
+        "verify": "bash /tmp/trinity_sync_force_validate.sh"
+      },
+      {
+        "id": "AC3",
+        "title": "全局同步后 JS 语法不再被 SYNCTAG 污染，sidecar 存在且无内联标签",
+        "verify": "node --check /usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/harness.js && node --check /usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/context-assembler/context-assembler.js && ! rg -n 'SYNCTAG:' /usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/harness.js /usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/context-assembler/context-assembler.js /usr/local/lib/node_modules/openclaw/skills/agency-agents-lib/index.json && ls /usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/harness.js.synctag >/dev/null"
+      }
+    ],
+    "verify": "bash -n scripts/sync_skills.sh && rg 'adopt-tag|sidecar|force' scripts/sync_skills.sh"
   }
 ]

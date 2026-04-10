@@ -1,5 +1,27 @@
 # Progress Log
 
+## 2026-04-10上午 — sync_skills.sh 修复：untagged 自动收编 + sidecar 版本标记 + force 真正生效
+**status:** local + global verified
+
+**本轮完成：**
+- 修复 `sync_skills.sh` 第一处行为 bug：`untagged` 文件现在在普通 `--sync` 下就会被**真正更新并收编**，不再假装成功却要求额外 `--force`
+- 修复第二处行为 bug：`--sync --force` 现在对 `✅ up-to-date` 文件也会**实际重写**，符合脚本帮助文案“即使已同步也强制重写”
+- 修复底层设计 bug：版本追踪从**内联注释**改为 sidecar `*.synctag` 文件，避免把 HTML 注释塞进 ESM `.js` / `index.json` 里导致语法污染
+- 全局 OpenClaw skills 已重新用新脚本 `--sync --global --force` 刷新并修复
+
+**验证：**
+- `bash -n scripts/sync_skills.sh` ✅
+- `bash /tmp/trinity_sync_sidecar_validate.sh` ✅（untagged → plain `--sync` 自动生成 `.synctag`）
+- `bash /tmp/trinity_sync_force_validate.sh` ✅（up-to-date + stale inline tag → `--sync --force` 真重写）
+- `node --check /usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/harness.js` ✅
+- `node --check /usr/local/lib/node_modules/openclaw/skills/dev-project-harness-loop/scripts/context-assembler/context-assembler.js` ✅
+- `NO_INLINE_TAGS` ✅；关键 sidecar 文件存在 ✅
+
+**下一步：**
+- 可选：把 `HARNESS-INSTALL-GUIDE.md` / `README.md` 关于 `sync_skills.sh` 的版本说明更新为 sidecar 机制，避免文档继续描述旧的“文件头部注释”方案
+
+---
+
 ## 2026-04-10早 — Minimal Ralph Upgrade / Batch 3
 **status:** local done
 

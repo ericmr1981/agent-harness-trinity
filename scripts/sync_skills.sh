@@ -11,9 +11,9 @@
 #   bash scripts/sync_skills.sh --sync --global           # update global skills
 #
 # Version strategy:
-#   Each installed file has a version comment in the first line:
-#   <!-- SYNCTAG: 0bcb47b -->
-#   The script compares this against the latest GitHub commit SHA for that file.
+#   Each installed file tracks version via a sidecar file:
+#   <target-file>.synctag  containing: SYNCTAG: <sha>
+#   This avoids breaking module / JSON syntax while still allowing version checks.
 #
 # Manifest format (per skill, see MANIFEST below):
 #   Each entry: local_path | repo_source_path | category
@@ -76,13 +76,21 @@ get_latest_sha() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# 2. Read version tag from a file (first line matching SYNCTAG)
+# 2. Read version tag from sidecar (preferred) or legacy inline tag
 # ─────────────────────────────────────────────────────────────
 get_local_version() {
   local file="$1"
-  if [[ ! -f "$file" ]]; then echo "not-installed"; return; fi
-  local tag
-  tag=$(grep -m1 'SYNCTAG:' "$file" 2>/dev/null | sed 's/.*SYNCTAG: //' | tr -d ' ')
+  local sidecar="${file}.synctag"
+  if [[ ! -f "$file" && ! -f "$sidecar" ]]; then echo "not-installed"; return; fi
+
+  local tag=""
+  if [[ -f "$sidecar" ]]; then
+    tag=$(grep -m1 'SYNCTAG:' "$sidecar" 2>/dev/null | sed 's/.*SYNCTAG: //' | tr -d ' ')
+  fi
+  if [[ -z "$tag" && -f "$file" ]]; then
+    tag=$(grep -m1 'SYNCTAG:' "$file" 2>/dev/null | sed 's/.*SYNCTAG: //' | tr -d ' ')
+  fi
+
   if [[ -z "$tag" ]]; then
     echo "untagged"
   else
@@ -92,47 +100,22 @@ get_local_version() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# 3. Inject / update SYNCTAG comment at top of file (after frontmatter or shebang)
+# 3. Write sidecar SYNCTAG and remove any legacy inline tags
 # ─────────────────────────────────────────────────────────────
 update_synctag() {
   local file="$1"
   local sha="$2"
-  local tag="<!-- SYNCTAG: $sha -->"
+  local sidecar="${file}.synctag"
 
   if [[ ! -f "$file" ]]; then return; fi
 
-  # Remove existing SYNCTAG lines
+  # Remove legacy inline SYNCTAG lines from the file content itself.
   local tmp
   tmp=$(mktemp)
   grep -v 'SYNCTAG:' "$file" > "$tmp" || true
   mv "$tmp" "$file"
 
-  # Insert at top (after shebang / frontmatter if present)
-  if head -1 "$file" | grep -q '^#!/'; then
-    # After shebang
-    local line
-    line=$(head -1 "$file")
-    tail -n +2 "$file" > "$tmp" || true
-    printf '%s\n%s\n' "$line" "$tag" > "$file"
-    cat "$tmp" >> "$file"
-    rm -f "$tmp"
-  elif head -1 "$file" | grep -q '^---'; then
-    # YAML frontmatter — insert after closing --- line
-    local afterFm
-    afterFm=$(awk '/^---$/{c++;if(c==1)next} c==1{print;next} !c{print;exit}' "$file")
-    local fmEndLine
-    fmEndLine=$(awk '/^---$/{c++} c==1{print NR; exit}' "$file")
-    if [[ -n "$fmEndLine" ]]; then
-      head -n "$fmEndLine" "$file" > "$tmp"
-      printf '%s\n' "$tag" >> "$tmp"
-      tail -n +$((fmEndLine + 1)) "$file" >> "$tmp"
-      mv "$tmp" "$file"
-    else
-      printf '%s\n' "$tag" | cat - "$file" > "$tmp" && mv "$tmp" "$file"
-    fi
-  else
-    printf '%s\n' "$tag" | cat - "$file" > "$tmp" && mv "$tmp" "$file"
-  fi
+  printf 'SYNCTAG: %s\n' "$sha" > "$sidecar"
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -269,14 +252,25 @@ while IFS= read -r line; do
   elif [[ "$local_ver" == "untagged" ]]; then
     status="untagged"
     count_untagged=$((count_untagged + 1))
-    action="${FORCE:+$(if $DRY_RUN; then echo "force (dry)"; else echo "force"; fi)}"
-    if [[ "$SYNC" == "true" && "$FORCE" == "true" ]] && ! $DRY_RUN; then
+    if [[ "$SYNC" == "true" ]]; then
+      action="$(if $DRY_RUN; then echo "adopt-tag (dry)"; else echo "adopt-tag"; fi)"
+    else
+      action="run --sync"
+    fi
+    if [[ "$SYNC" == "true" ]] && ! $DRY_RUN; then
       download_file "$repo_path" "$full_local" "$LATEST_SHA" && : || count_error=$((count_error + 1))
     fi
   elif [[ "$local_ver" == "$LATEST_SHORT" ]]; then
     status="✅ up-to-date"
     count_up_to_date=$((count_up_to_date + 1))
-    action="—"
+    if [[ "$SYNC" == "true" && "$FORCE" == "true" ]]; then
+      action="$(if $DRY_RUN; then echo "force (dry)"; else echo "force"; fi)"
+      if ! $DRY_RUN; then
+        download_file "$repo_path" "$full_local" "$LATEST_SHA" && : || count_error=$((count_error + 1))
+      fi
+    else
+      action="—"
+    fi
   else
     status="🔄 behind"
     count_behind=$((count_behind + 1))
@@ -309,11 +303,15 @@ if (( needs_sync > 0 )) && ! $SYNC; then
 fi
 
 if $SYNC; then
+  attempted_updates=$((count_behind + count_not_installed + count_untagged))
+  if [[ "$FORCE" == "true" ]]; then
+    attempted_updates=$((attempted_updates + count_up_to_date))
+  fi
   if (( count_error > 0 )); then
     echo ""
     echo "⚠️  $count_error file(s) failed to download."
     exit 1
   else
-    echo "✅ Sync complete. All files updated to $LATEST_SHORT."
+    echo "✅ Sync complete. Applied updates to $attempted_updates file(s); target version $LATEST_SHORT."
   fi
 fi
