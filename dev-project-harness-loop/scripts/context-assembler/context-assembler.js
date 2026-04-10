@@ -130,20 +130,37 @@ async function gatherFeatures(repoPath) {
   try {
     const raw = await readFile(featuresPath, 'utf8');
     const data = JSON.parse(raw);
-    if (data.features) {
-      const unfinished = data.features.filter(f => !f.passes && !f.builtin);
-      const passing = data.features.filter(f => f.passes);
-      return {
-        total: data.features.length,
-        passing: passing.length,
-        unfinished: unfinished.slice(0, 10).map(f => ({
-          title: f.title,
-          passes: f.passes,
-          priority: f.priority || 'medium'
-        }))
-      };
-    }
-    return null;
+    const entries = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.features)
+        ? data.features
+        : null;
+    if (!entries) return null;
+
+    const normalized = entries.map((f, index) => ({
+      id: f.id || `F-${String(index + 1).padStart(3, '0')}`,
+      title: f.title || `Feature ${index + 1}`,
+      passes: Boolean(f.passes),
+      status: f.passes ? 'done' : (f.status || 'todo'),
+      priority: Number.isFinite(f.priority) ? f.priority : index + 1,
+      size: f.size || '',
+      builtin: Boolean(f.builtin)
+    }));
+
+    const unfinished = normalized.filter(f => !f.passes && !f.builtin && f.status !== 'done');
+    const passing = normalized.filter(f => f.passes);
+    return {
+      total: normalized.length,
+      passing: passing.length,
+      unfinished: unfinished.slice(0, 10).map(f => ({
+        id: f.id,
+        title: f.title,
+        passes: f.passes,
+        status: f.status,
+        priority: f.priority,
+        size: f.size || 'n/a'
+      }))
+    };
   } catch (_) {}
   return null;
 }

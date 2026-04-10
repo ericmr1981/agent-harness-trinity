@@ -223,6 +223,9 @@ async function main() {
     // Step 9: Write report + state artifact
     await writeContinueGateArtifact(masterConfig);
     await writePostTaskReport(masterConfig);
+
+    // Step 10: Append round learning to repo AGENTS.md Learnings block
+    await appendRoundLearning(project, taskDescriptionClean, plan);
   }
 
   printReport(project, taskDescriptionClean, llmResult, plan, complexity, tokenTrack);
@@ -440,7 +443,9 @@ async function scanRepo(repoPath) {
     }
   } catch (_) {}
 
-  return { repoPath, codebaseType, framework, srcFiles, topFiles, buildCmd, testCmd, guardCmd, localOracle };
+  const featuresBacklog = readFeaturesBacklog(repoPath);
+
+  return { repoPath, codebaseType, framework, srcFiles, topFiles, buildCmd, testCmd, guardCmd, localOracle, featuresBacklog };
 }
 
 function composeLocalOracle(scan) {
@@ -451,6 +456,100 @@ function composeLocalOracle(scan) {
   return uniqueCommands.length > 0
     ? uniqueCommands.join(' && ')
     : 'project-local verification command not yet discovered';
+}
+
+function readFeaturesBacklog(repoPath) {
+  const featuresPath = path.join(repoPath, 'features.json');
+  try {
+    const raw = execSync(`cat "${featuresPath}"`, { encoding: 'utf8', timeout: 5000 });
+    const parsed = JSON.parse(raw);
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.features)
+        ? parsed.features
+        : [];
+
+    return entries.map((entry, index) => ({
+      id: entry.id || `F-${String(index + 1).padStart(3, '0')}`,
+      title: entry.title || `Feature ${index + 1}`,
+      verify: entry.verify || '',
+      passes: Boolean(entry.passes),
+      status: normalizeFeatureStatus(entry),
+      priority: Number.isFinite(entry.priority) ? entry.priority : index + 1,
+      size: normalizeFeatureSize(entry.size),
+      dependsOn: Array.isArray(entry.dependsOn) ? entry.dependsOn : [],
+      notes: typeof entry.notes === 'string' ? entry.notes : '',
+      acceptanceCriteria: Array.isArray(entry.acceptanceCriteria) ? entry.acceptanceCriteria : []
+    }));
+  } catch (_) {
+    return [];
+  }
+}
+
+function normalizeFeatureStatus(entry = {}) {
+  if (entry.passes) return 'done';
+  const raw = String(entry.status || '').trim().toLowerCase();
+  if (['todo', 'doing', 'blocked', 'done', 'split_required'].includes(raw)) return raw;
+  return 'todo';
+}
+
+function normalizeFeatureSize(size) {
+  const raw = String(size || '').trim().toUpperCase();
+  return ['S', 'M', 'L'].includes(raw) ? raw : '';
+}
+
+function isFeatureReady(feature, featureMap) {
+  if (!feature || feature.passes || feature.status === 'done' || feature.status === 'blocked') return false;
+  return feature.dependsOn.every(depId => {
+    const dep = featureMap.get(depId);
+    return dep ? dep.passes || dep.status === 'done' : true;
+  });
+}
+
+function selectNextFeature(backlog = []) {
+  if (!Array.isArray(backlog) || backlog.length === 0) return null;
+  const featureMap = new Map(backlog.map(item => [item.id, item]));
+  const pending = backlog
+    .filter(item => isFeatureReady(item, featureMap))
+    .sort((a, b) => (a.priority - b.priority) || a.id.localeCompare(b.id));
+  return pending[0] || null;
+}
+
+function evaluateStoryGate(feature) {
+  if (!feature) return { splitRequired: false, reasons: [] };
+  const reasons = [];
+  if (feature.status === 'split_required') reasons.push('feature already marked as split_required');
+  if (feature.size === 'L') reasons.push('feature size=L (too large for one bounded iteration)');
+  if (feature.acceptanceCriteria.length > 5) reasons.push(`feature has ${feature.acceptanceCriteria.length} acceptance criteria (>5)`);
+  return { splitRequired: reasons.length > 0, reasons };
+}
+
+function buildFeatureScope(feature) {
+  if (!feature) return '';
+  const verifySection = feature.verify
+    ? `\n## Verification\n\`\`\`bash\n${feature.verify}\n\`\`\``
+    : '';
+  const notesSection = feature.notes
+    ? `\n## Notes\n${feature.notes}`
+    : '';
+  const criteriaSection = feature.acceptanceCriteria.length > 0
+    ? `\n## Acceptance Criteria\n${feature.acceptanceCriteria.map(item => `- ${item}`).join('\n')}`
+    : '';
+  return `Feature ${feature.id}: ${feature.title}${criteriaSection}${verifySection}${notesSection}`;
+}
+
+function applySplitRequiredGate(continueGate, feature, reasons = []) {
+  const reasonText = reasons.join('; ');
+  return {
+    ...continueGate,
+    roundOutcome: 'split_required',
+    stopAllowed: 'yes',
+    currentBlocker: `Selected feature ${feature.id} must be split before execution: ${reasonText}`,
+    nextForcedBet: `Split feature ${feature.id} into smaller stories in features.json, then rerun /harness on the narrowed story.`,
+    evidenceDelta: 'split-required',
+    resultStatus: '⚠️ split_required',
+    lastEvidence: continueGate.lastEvidence || `Story gate rejected ${feature.id}: ${reasonText}`
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -614,7 +713,8 @@ ${topFilesStr}
 
 const SYSTEM_PROMPT_V4 = `You are a senior software architect. Output ONLY valid JSON.
 - needsClarification=true ONLY when critical info missing (project name, game rules, etc.)
-- isMultiAgent=true when task spans different skill domains
+- Default to one bounded story per round
+- isMultiAgent=true ONLY when there are clearly independent stories that can run in parallel without shared state conflicts
 - complexity 1=trivial(改错别字), 3=medium(单功能), 5=architecture-changing
 - riskLevel: high if involves auth/payments/deploy
 - agentSuggestions: pick best match from listed IDs only`;
@@ -776,31 +876,66 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
   const baseDir = path.join(HARNESS_DIR, 'contracts');
   await mkdir(baseDir, { recursive: true });
 
-  const { taskType, riskLevel, scopeGuess } = llmResult?.taskProfile || { taskType: 'single', riskLevel: 'medium', scopeGuess: 'multi-file' };
-  const matrixFlags = buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult);
+  const nextFeature = selectNextFeature(scan?.featuresBacklog || []);
+  const featureGate = evaluateStoryGate(nextFeature);
+  const baseTaskProfile = llmResult?.taskProfile || { taskType: 'single', riskLevel: 'medium', scopeGuess: 'multi-file' };
+  const effectiveTaskProfile = nextFeature
+    ? {
+        ...baseTaskProfile,
+        taskType: 'single',
+        scopeGuess: nextFeature.dependsOn.length > 0 ? 'multi-file' : 'single-file'
+      }
+    : baseTaskProfile;
+  const { taskType, riskLevel, scopeGuess } = effectiveTaskProfile;
+  const matrixFlags = buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, nextFeature, featureGate);
 
   // Agent selection: decision tree (llm mode) or keyword fallback
   const agent = MODE_ARG === 'minimal'
     ? { id: 'engineering-senior-developer', confidence: 50, category: 'engineering', file: 'skills/agency-agents-lib/agents/engineering/engineering-senior-developer.md' }
-    : agencyDecisionTree(taskDescription, llmResult, complexity);
+    : agencyDecisionTree(nextFeature ? `${nextFeature.title} ${nextFeature.notes}`.trim() : taskDescription, { ...llmResult, taskProfile: effectiveTaskProfile }, complexity);
 
   console.log(`\n🤖 Selected Agent: ${agent.id} (confidence: ${agent.confidence}%)`);
-  tokenTrack.subagentEstimate = complexity >= 7 ? 4 : complexity >= 4 ? 2 : 1;
+  if (nextFeature) console.log(`🎯 Selected Story: ${nextFeature.id} (${nextFeature.title})`);
+  tokenTrack.subagentEstimate = nextFeature ? 1 : (complexity >= 7 ? 4 : complexity >= 4 ? 2 : 1);
 
   // Determine attachment tier
   const tier = scoreToAttachmentTier(complexity);
   const executionResult = deriveExecutionResult(previousMasterConfig);
-  const continueGate = deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig, executionResult);
+  let continueGate = deriveContinueGate(nextFeature ? `${taskDescription} :: ${nextFeature.id}` : taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, complexity, previousMasterConfig, executionResult);
+  if (nextFeature && featureGate.splitRequired) {
+    continueGate = applySplitRequiredGate(continueGate, nextFeature, featureGate.reasons);
+  }
   console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF only' : 'full 6-7 files'})`);
 
-  if (llmResult?.isMultiAgent && llmResult.agentPlan?.length > 0) {
+  if (nextFeature && featureGate.splitRequired) {
+    const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate);
+    return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature };
+  }
+
+  if (nextFeature) {
+    const spec = {
+      sprintId: nextFeature.id.toLowerCase(),
+      role: agent.id,
+      scope: buildFeatureScope(nextFeature),
+      dependsOn: nextFeature.dependsOn || []
+    };
+    sprints.push({
+      sprintId: spec.sprintId,
+      role: spec.role,
+      scope: spec.scope,
+      dependsOn: spec.dependsOn,
+      brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, [], matrixFlags, agent, continueGate, codemapPath),
+      agent,
+      attachmentTier: tier
+    });
+  } else if (llmResult?.isMultiAgent && llmResult.agentPlan?.length > 0 && complexity >= 7) {
     for (const spec of llmResult.agentPlan) {
       sprints.push({
         sprintId: spec.sprintId,
         role: spec.role,
         scope: spec.scope,
         dependsOn: spec.dependsOn || [],
-        brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, sprints, matrixFlags, agent, continueGate, codemapPath),
+        brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, sprints, matrixFlags, agent, continueGate, codemapPath),
         agent: selectAgentFromId(spec.role),
         attachmentTier: scoreToAttachmentTier(complexity)
       });
@@ -812,23 +947,25 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       role: spec.role,
       scope: spec.scope,
       dependsOn: [],
-      brief: buildSprintBrief(taskDescription, project, llmResult, scan, spec, [], matrixFlags, agent, continueGate, codemapPath),
+      brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, [], matrixFlags, agent, continueGate, codemapPath),
       agent,
       attachmentTier: tier
     });
   }
 
-  const masterBrief = buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate);
-  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult };
+  const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate);
+  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature };
 }
 
-function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult) {
+function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, selectedFeature = null, featureGate = null) {
   const flags = [];
   if (complexity >= 7)  flags.push({ flag: 'COMPLEXITY_HIGH', note: `complexity=${complexity} — PGE-sprint enforced` });
   if (complexity >= 4)  flags.push({ flag: 'COMPLEXITY_MED', note: `complexity=${complexity} — consider multi-sprint` });
   if (riskLevel === 'high') flags.push({ flag: 'RISK_HIGH', note: 'L1 acceptance enforced — no L0 shortcuts' });
   if (scopeGuess === 'cross-layer' || scopeGuess === 'full-rewrite') flags.push({ flag: 'SCOPE_CROSS', note: `scope=${scopeGuess} — affects multiple layers` });
-  if (llmResult?.isMultiAgent) flags.push({ flag: 'MULTI_AGENT', note: 'multi-agent sprint plan generated' });
+  if (selectedFeature) flags.push({ flag: 'SINGLE_STORY', note: `dispatch only feature ${selectedFeature.id} in this round` });
+  if (featureGate?.splitRequired) flags.push({ flag: 'SPLIT_REQUIRED', note: featureGate.reasons.join('; ') });
+  if (!selectedFeature && llmResult?.isMultiAgent) flags.push({ flag: 'MULTI_AGENT', note: 'multi-agent sprint plan generated' });
   return flags;
 }
 
@@ -1354,7 +1491,7 @@ async function updateActive(project, taskDescription, plan) {
 
   const activeStatus = continueGate?.roundOutcome === 'goal_closed'
     ? 'goal_closed'
-    : continueGate?.roundOutcome === 'blocked_approval' || continueGate?.roundOutcome === 'blocked_external'
+    : continueGate?.roundOutcome === 'blocked_approval' || continueGate?.roundOutcome === 'blocked_external' || continueGate?.roundOutcome === 'split_required'
       ? 'blocked'
       : 'running';
   const masterBriefPath = path.join(HARNESS_DIR, 'assignments', `master-brief-${Date.now()}.md`);
@@ -1454,7 +1591,7 @@ async function writePostTaskReport(masterConfig) {
 | Final Oracle | ${continueGate?.finalOracle || '⬜ fill'} |
 | Local Oracle | ${continueGate?.localOracle || '⬜ fill'} |
 | Current Blocker | ${continueGate?.currentBlocker || '⬜ fill'} |
-| Round Outcome | ${continueGate?.roundOutcome || 'retry_with_new_bet'} |
+| Round Outcome | ${continueGate?.roundOutcome || 'retry_with_new_bet / split_required'} |
 | Stop Allowed | ${continueGate?.stopAllowed || 'no'} |
 | Next Forced Bet | ${continueGate?.nextForcedBet || '⬜ fill'} |
 | Evidence Delta | ${continueGate?.evidenceDelta || 'pending-first-round'} |
@@ -1487,7 +1624,7 @@ async function writePostTaskReport(masterConfig) {
 | Actual Duration | ${executionResult?.actualDurationMin ?? '__'} min |
 | Retry Count | ${executionResult?.retryCount ?? '__'} |
 | Failure Type | ${executionResult?.failureType || continueGate?.failureType || 'none / L0 / L1 / L2'} |
-| Round Outcome | ${continueGate?.roundOutcome || 'goal_closed / retry_with_new_bet / pivot_required / blocked_external / blocked_approval'} |
+| Round Outcome | ${continueGate?.roundOutcome || 'goal_closed / retry_with_new_bet / pivot_required / blocked_external / blocked_approval / split_required'} |
 
 ### What was done
 ${executionResult?.whatWasDone || '⬜ List completed items'}
@@ -1545,6 +1682,72 @@ ${executionResult?.verificationEvidence || continueGate?.lastEvidence || '⬜ Pa
 `;
   await writeFile(reportPath, content);
   console.log(`\n📊 Report written: ${reportPath}`);
+}
+
+// ─────────────────────────────────────────────────────────────
+// LEARNINGS — Ralph principle: every round writes back a learning
+// ─────────────────────────────────────────────────────────────
+async function appendRoundLearning(project, taskDescription, plan) {
+  const { continueGate, executionResult, sprints } = plan;
+  if (!continueGate) return;
+
+  const agentsPath = path.join(project.repoPath, 'AGENTS.md');
+  let raw = '';
+  try {
+    raw = await readFile(agentsPath, 'utf8');
+  } catch (_) {
+    // No AGENTS.md in this repo — skip silently
+    return;
+  }
+
+  const entry = buildLearningEntry(taskDescription, plan);
+  const MARKER_START = '<!-- LEARNINGS_BLOCK -->';
+  const MARKER_END = '<!-- LEARNINGS_END -->';
+
+  let next;
+  if (raw.includes(MARKER_START) && raw.includes(MARKER_END)) {
+    // Append inside the block
+    next = raw
+      .replace(MARKER_END, `\n${entry}\n${MARKER_END}`);
+  } else {
+    // No block yet — create one at the end of the file
+    const newBlock = `\n${MARKER_START}\n## Learnings\n_Last round entry auto-appended by harness.js. Edit inside the block only._\n\n${entry}\n${MARKER_END}\n`;
+    next = raw.trimEnd() + newBlock;
+  }
+
+  await writeFile(agentsPath, next);
+  console.log(`   📝 Learning appended to: ${agentsPath}`);
+}
+
+function buildLearningEntry(taskDescription, plan) {
+  const { continueGate, executionResult, sprints } = plan;
+  const date = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const outcome = continueGate?.roundOutcome || 'unknown';
+  const sprintList = sprints.map(s => s.sprintId).join(', ') || 'none';
+  const blocker = continueGate?.currentBlocker || '';
+  const evidence = continueGate?.lastEvidence || executionResult?.verificationEvidence || '';
+  const insight = deriveInsight(taskDescription, plan);
+
+  return `### ${date} — ${outcome}
+
+- **Task**: ${taskDescription}
+- **Sprints**: ${sprintList}
+- **Blocker**: ${blocker || '_none_'}
+- **Insight**: ${insight}
+- **Evidence**: ${evidence || '_pending_'}
+`;
+}
+
+function deriveInsight(taskDescription, plan) {
+  const { continueGate, executionResult } = plan;
+  const outcome = continueGate?.roundOutcome;
+  if (outcome === 'goal_closed') return 'Goal reached — record closure and stop.';
+  if (outcome === 'split_required') return 'Story too large for one round; split before retry.';
+  if (outcome === 'pivot_required') return 'Same branch produced no new evidence for 2 rounds; change approach.';
+  if (outcome === 'blocked_approval') return 'Hit approval boundary; await Boss authorization.';
+  if (outcome === 'blocked_external') return 'External dependency blocked execution; record and wait.';
+  if (executionResult?.whatWasDone) return `Completed: ${executionResult.whatWasDone.split('\n')[0]}`;
+  return 'One bounded iteration executed; verify and continue.';
 }
 
 // ─────────────────────────────────────────────────────────────

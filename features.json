@@ -52,5 +52,27 @@
     "title": "codemap.js v3: 职责分层 + 文档/脚本跨目录引用",
     "passes": true,
     "verify": "node dev-project-harness-loop/scripts/codemap.js . --force --output harness/artifacts/codemap.md && rg '职责分层（Role Map）|跨目录引用（文档 / 脚本显式提及）' harness/artifacts/codemap.md && rg '\"version\": 3|\"roleLayers\":|\"docCrossRefs\":' harness/artifacts/codemap.meta.json"
+  },
+  {
+    "id": "F-010",
+    "title": "harness.js 默认单 story 调度，并对过大 feature 执行 split gate",
+    "passes": true,
+    "priority": 10,
+    "size": "S",
+    "status": "done",
+    "dependsOn": [],
+    "notes": "Batch 1 of Minimal Ralph Upgrade: select one runnable feature from features.json, block size=L / split_required stories from direct dispatch, and keep multi-agent only for clearly independent high-complexity work.",
+    "verify": "node --check dev-project-harness-loop/scripts/harness.js && node dev-project-harness-loop/scripts/context-assembler/context-assembler.js . \"pick next feature from features queue\""
+  },
+  {
+    "id": "F-011",
+    "title": "harness.js 每轮自动把学习写回 repo 的 AGENTS.md Learnings 区块",
+    "passes": true,
+    "priority": 11,
+    "size": "S",
+    "status": "done",
+    "dependsOn": [],
+    "notes": "Batch 2 of Minimal Ralph Upgrade: appendRoundLearning() 在每轮结果落盘后自动把 entry 写入 repo AGENTS.md 的 <!-- LEARNINGS_BLOCK --> 区块。格式：日期 + roundOutcome + blocker + Insight + Evidence。",
+    "verify": "node --check dev-project-harness-loop/scripts/harness.js && rg 'LEARNINGS_BLOCK|appendRoundLearning' dev-project-harness-loop/scripts/harness.js"
   }
 ]

@@ -1,5 +1,43 @@
 # Progress Log
 
+## 2026-04-10早 — Minimal Ralph Upgrade / Batch 2
+**status:** local done
+
+**本轮完成：**
+- `appendRoundLearning()` 在每轮 harness 结果落盘后**自动**把一个结构化 entry 追加到 repo `AGENTS.md` 的 `<!-- LEARNINGS_BLOCK -->` 受控区块
+- Entry 格式：`日期 | roundOutcome | blocker | Insight（一句话）| Evidence`
+- `deriveInsight()` 对 6 种不同 outcome 返回对应的简短 insight 句子
+- AGENTS.md 已预置 `<!-- LEARNINGS_BLOCK -->...<!-- LEARNINGS_END -->` 标记（无学习时区块为空）
+
+**验证：**
+- `node --check dev-project-harness-loop/scripts/harness.js` ✅
+- `rg 'LEARNINGS_BLOCK|appendRoundLearning' dev-project-harness-loop/scripts/harness.js` ✅
+
+**下一步：**
+- Batch 3：把 features.json 的 `acceptanceCriteria` 字段和 harness 的 oracle/验收体系打通（让 feature entry 本身带可执行验收）
+
+---
+
+## 2026-04-10早 — Minimal Ralph Upgrade / Batch 1
+**status:** local done
+
+**本轮完成：**
+- `harness.js` 增加 `features.json` 轻量故事队列读取能力（支持数组根格式）
+- 默认从 backlog 中只选择 **一个** 可执行 feature 进入本轮 dispatch（single-story-by-default）
+- 增加 story gate：`size=L`、`status=split_required`、或 acceptance criteria 过多的 feature 不再直接执行，而是返回 `split_required`
+- multi-agent 仅在**没有 feature backlog 约束**且确实是高复杂度独立任务时保留
+- `ContextAssembler` 现已能识别增强后的 `features.json` 结构，并把 `id/status/priority/size` 带入 context
+
+**验证：**
+- `node --check dev-project-harness-loop/scripts/harness.js`
+- `node --check dev-project-harness-loop/scripts/context-assembler/context-assembler.js`
+- `node dev-project-harness-loop/scripts/context-assembler/context-assembler.js . "pick next feature from features queue"`
+
+**下一步：**
+- Batch 2：把每轮 learnings 默认写回 repo 的固定位置（优先考虑 `AGENTS.md` 的受控区块）
+
+---
+
 ## 2026-04-09深夜 — 补充本地同步 runbook（repo → runtime）
 **status:** done
 

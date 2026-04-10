@@ -21,3 +21,9 @@ Keep this file short (~100 lines).
 3) Implement + verify
 4) Commit + log (include commit hash)
 5) Continue unless blocker / approval boundary / major pivot
+
+<!-- LEARNINGS_BLOCK -->
+## Learnings
+_Last round entry auto-appended by harness.js. Edit inside the block only._
+
+<!-- LEARNINGS_END -->

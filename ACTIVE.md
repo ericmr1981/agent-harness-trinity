@@ -5,33 +5,38 @@
 ## Current Project
 - **Name**: agent-harness-trinity
 - **Repo**: /Users/ericmr/Documents/GitHub/agent-harness-trinity
-- **Objective**: Keep Trinity usable in practice: document the reliable repo → runtime sync path so local workspace skills can be brought in line with repo updates without guesswork.
+- **Objective**: Apply the Minimal Ralph Upgrade without rewriting Trinity: make single-story dispatch the default, enforce a split gate for oversized features, and then add lightweight learning write-back.
 - **Status**: running
-- **Started**: 2026-04-09 23:05 GMT+8
+- **Started**: 2026-04-10 08:36 GMT+8
 
 ## Current Bet
-- **Bet**: Add a documented one-liner sync command and usage notes into the repo (`README.md` + `HARNESS-INSTALL-GUIDE.md`).
-- **Why this bet**: Boss asked for a repo-native, copy-pasteable way to sync GitHub updates into local runtime.
+- **Bet**: Batch 1 — implement B + C + minimal A: default one-story selection from `features.json`, block oversized stories with `split_required`, and teach ContextAssembler the upgraded feature queue shape.
+- **Why this bet**: Trinity already has strong governance; the missing discipline is "one small story per round" rather than more orchestration.
 
 ## Oracle
-- `rg -n "一键同步到本地运行环境|sync_skills\.sh --sync|install_skills\.sh --agent jarvis --with-subagent-lite" README.md HARNESS-INSTALL-GUIDE.md`
+- `node --check dev-project-harness-loop/scripts/harness.js`
+- `node --check dev-project-harness-loop/scripts/context-assembler/context-assembler.js`
+- `node dev-project-harness-loop/scripts/context-assembler/context-assembler.js . "pick next feature from features queue"`
 
 ## Result
 - **Outcome**: goal_closed
 - **Current Blocker**: None
 - **Stop Allowed**: yes
-- **Next Bet**: Optional — commit / push the docs update if Boss wants it tracked immediately.
+- **Next Bet**: Batch 3 — 把 `features.json` 的 `acceptanceCriteria` 字段和 harness 的 oracle 体系打通，让每个 feature 自己带可执行验收路径。
 
 ## Evidence
-- `README.md` now contains a recommended one-liner sync command under 更新方式
-- `HARNESS-INSTALL-GUIDE.md` now explains what each step does and when to use dry-run
-- local runtime sync path is explicitly documented: `git pull` → `sync_skills.sh --sync` → `install_skills.sh --agent jarvis --with-subagent-lite`
+- `harness.js` now reads `features.json` as a lightweight execution queue and prefers one runnable feature per round
+- `split_required` is now a first-class stop outcome for oversized stories (`size=L`, explicit split status, or too many acceptance criteria)
+- `ContextAssembler` now parses both array-root and object-root `features.json`
+- validation passed for both modified scripts
 
 ## Files Touched This Round
-- `README.md`
-- `HARNESS-INSTALL-GUIDE.md`
+- `dev-project-harness-loop/scripts/harness.js`
+- `dev-project-harness-loop/scripts/context-assembler/context-assembler.js`
+- `features.json`
 - `CHANGELOG.md`
 - `ACTIVE.md`
+- `AGENTS.md`
 
 ---
-*Last updated: 2026-04-09 23:07 GMT+8*
+*Last updated: 2026-04-10 01:08 GMT+8*
