@@ -44,6 +44,10 @@ if (outputPath && !path.isAbsolute(outputPath)) {
 }
 
 const OUT = outputPath || path.join(repoPath, 'harness', 'artifacts', 'codemap.md');
+const GENERATED_AT_ISO = new Date().toISOString();
+const INVOCATION_ID = `${GENERATED_AT_ISO.replace(/[-:.]/g, '').replace('T', '-').replace('Z', '')}-${process.pid}`;
+const INVOKED_VIA = process.env.CODEMAP_CALLER || 'direct';
+const REQUESTED_BY = process.env.CODEMAP_REQUESTED_BY || process.env.OPENCLAW_AGENT_ID || process.env.AGENT_ID || 'unknown';
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -751,6 +755,19 @@ async function buildCodemap() {
   lines.push(`| 语言分布 | ${Object.entries(langInfo.languages).filter(([,n])=>n>0).map(([k,n])=>`${k}:${n}`).join(' / ') || 'n/a'} |`);
   lines.push('');
 
+  lines.push(`## 生成反馈（Invocation）`);
+  lines.push('');
+  lines.push(`| 项目 | 值 |`);
+  lines.push(`|------|-----|`);
+  lines.push(`| 调用确认 | yes |`);
+  lines.push(`| Invocation ID | \`${INVOCATION_ID}\` |`);
+  lines.push(`| 调用脚本 | \`codemap.js\` |`);
+  lines.push(`| 调用来源 | \`${INVOKED_VIA}\` |`);
+  lines.push(`| 请求方 | \`${REQUESTED_BY}\` |`);
+  lines.push(`| 生成时间 | ${GENERATED_AT_ISO} |`);
+  lines.push(`| 输出文件 | \`${OUT}\` |`);
+  lines.push('');
+
   lines.push(`## 目录结构（Depth ≤ 3）`);
   lines.push('');
   lines.push('```');
@@ -897,15 +914,27 @@ async function buildCodemap() {
   const meta = {
     commit: currentCommit,
     generatedAt: Date.now(),
-    version: 4,
+    version: 5,
     trackedSrcCount,
     langInfo,
+    invocation: {
+      id: INVOCATION_ID,
+      confirmed: true,
+      script: 'codemap.js',
+      via: INVOKED_VIA,
+      requestedBy: REQUESTED_BY,
+      generatedAtIso: GENERATED_AT_ISO,
+      output: OUT,
+    },
     roleLayers: roleMap.length,
     docCrossRefs: docCrossRefs.length,
   };
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2), 'utf8');
 
   console.log(`✅ CodeMap written to: ${OUT}`);
+  console.log(`   Invocation ID: ${INVOCATION_ID}`);
+  console.log(`   Invoked via: ${INVOKED_VIA}`);
+  console.log(`   Requested by: ${REQUESTED_BY}`);
   console.log(`   Repo profile: ${repoProfile}`);
   console.log(`   Languages: ${langInfo.label} (${Object.entries(langInfo.languages).filter(([,n])=>n>0).map(([k,n])=>`${k}=${n}`).join(', ')})`);
   console.log(`   Files scanned: ${files.length}`);

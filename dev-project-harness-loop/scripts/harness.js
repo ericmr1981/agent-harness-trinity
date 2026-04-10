@@ -150,7 +150,15 @@ async function main() {
     codemapPath = path.join(codemapArtifactDir, 'codemap.md');
     try {
       const codemapScript = path.join(SCRIPT_DIR, 'codemap.js');
-      execSync(`node "${codemapScript}" "${project.repoPath}" --output "${codemapPath}"`, { timeout: 120, cwd: project.repoPath });
+      execSync(`node "${codemapScript}" "${project.repoPath}" --output "${codemapPath}"`, {
+        timeout: 120,
+        cwd: project.repoPath,
+        env: {
+          ...process.env,
+          CODEMAP_CALLER: 'harness.js',
+          CODEMAP_REQUESTED_BY: 'trinity-harness',
+        },
+      });
       console.log('📍 CodeMap generated: harness/artifacts/codemap.md');
     } catch (e) {
       console.warn('⚠️  CodeMap generation failed (non-fatal):', e.message);

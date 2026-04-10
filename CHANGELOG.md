@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-04-10上午 — codemap 增加调用反馈：知道脚本是否真的被调用
+**status:** local verified
+
+**本轮完成：**
+- `codemap.md` 新增 `生成反馈（Invocation）` 区块，明确写出：`调用确认`、`Invocation ID`、`调用脚本`、`调用来源`、`请求方`、`生成时间`、`输出文件`
+- `codemap.meta.json` 新增 `invocation` 对象，version 升至 **5**
+- `codemap.js` stdout 现在会打印 `Invocation ID / Invoked via / Requested by`
+- `harness.js` 调用 codemap 时会显式注入：`CODEMAP_CALLER=harness.js`、`CODEMAP_REQUESTED_BY=trinity-harness`
+
+**验证：**
+- `node --check dev-project-harness-loop/scripts/codemap.js` ✅
+- `node --check dev-project-harness-loop/scripts/harness.js` ✅
+- MC-Gen 临时生成文件已出现 `生成反馈（Invocation）` 区块 ✅
+- MC-Gen meta 已出现 `invocation` 对象，`version: 5` ✅
+
 ## 2026-04-10上午 — codemap 使用建议文案收窄：skill 仓 vs 带 harness 层的业务仓
 **status:** local + mc-gen wording verified
 
