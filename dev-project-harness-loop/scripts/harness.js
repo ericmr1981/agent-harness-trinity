@@ -479,7 +479,7 @@ function readFeaturesBacklog(repoPath) {
       size: normalizeFeatureSize(entry.size),
       dependsOn: Array.isArray(entry.dependsOn) ? entry.dependsOn : [],
       notes: typeof entry.notes === 'string' ? entry.notes : '',
-      acceptanceCriteria: Array.isArray(entry.acceptanceCriteria) ? entry.acceptanceCriteria : []
+      acceptanceCriteria: normalizeAcceptanceCriteria(entry.acceptanceCriteria)
     }));
   } catch (_) {
     return [];
@@ -496,6 +496,84 @@ function normalizeFeatureStatus(entry = {}) {
 function normalizeFeatureSize(size) {
   const raw = String(size || '').trim().toUpperCase();
   return ['S', 'M', 'L'].includes(raw) ? raw : '';
+}
+
+function normalizeAcceptanceCriteria(items = []) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, index) => normalizeAcceptanceCriterion(item, index))
+    .filter(Boolean);
+}
+
+function normalizeAcceptanceCriterion(item, index) {
+  if (typeof item === 'string') {
+    const title = item.trim();
+    return title ? { id: `AC${index + 1}`, title, verify: '', negativeTest: '', evidence: '' } : null;
+  }
+  if (!item || typeof item !== 'object') return null;
+
+  const title = String(item.title || item.summary || item.name || item.text || `Acceptance criterion ${index + 1}`).trim();
+  if (!title) return null;
+
+  return {
+    id: String(item.id || `AC${index + 1}`),
+    title,
+    verify: String(item.verify || item.command || '').trim(),
+    negativeTest: String(item.negativeTest || item.negative || '').trim(),
+    evidence: String(item.evidence || item.evidenceHint || '').trim()
+  };
+}
+
+function formatAcceptanceCriteriaMarkdown(criteria = []) {
+  if (!Array.isArray(criteria) || criteria.length === 0) return '';
+  return criteria.map(item => {
+    const details = [
+      item.verify ? `  - verify: \`${item.verify}\`` : '',
+      item.negativeTest ? `  - negative: \`${item.negativeTest}\`` : '',
+      item.evidence ? `  - evidence: ${item.evidence}` : ''
+    ].filter(Boolean).join('\n');
+    return details
+      ? `- [${item.id}] ${item.title}\n${details}`
+      : `- [${item.id}] ${item.title}`;
+  }).join('\n');
+}
+
+function formatAcceptanceCriteriaInline(criteria = []) {
+  if (!Array.isArray(criteria) || criteria.length === 0) return '';
+  return criteria.map(item => {
+    const parts = [item.title];
+    if (item.verify) parts.push(`verify=${item.verify}`);
+    if (item.negativeTest) parts.push(`negative=${item.negativeTest}`);
+    return `[${item.id}] ${parts.join(' | ')}`;
+  }).join('; ');
+}
+
+function joinOracleCommands(commands = []) {
+  const unique = [...new Set(commands.map(cmd => String(cmd || '').trim()).filter(Boolean))];
+  return unique.join(' && ');
+}
+
+function buildFeatureOracle(feature, scan) {
+  if (!feature) return null;
+  const criteria = feature.acceptanceCriteria || [];
+  const criteriaCommands = criteria.flatMap(item => [item.verify, item.negativeTest]).filter(Boolean);
+  const localOracle = joinOracleCommands([feature.verify, ...criteriaCommands])
+    || scan?.localOracle
+    || composeLocalOracle(scan)
+    || 'project-local verification command not yet discovered';
+  const acceptanceSummary = formatAcceptanceCriteriaInline(criteria);
+  const finalOracle = criteria.length > 0
+    ? `Feature ${feature.id} (${feature.title}) is accepted only if all listed acceptance criteria pass: ${acceptanceSummary}. Local oracle: ${localOracle}`
+    : `Live acceptance for feature ${feature.id} (${feature.title}) plus local oracle: ${localOracle}`;
+
+  return {
+    featureId: feature.id,
+    featureTitle: feature.title,
+    acceptanceCriteria: criteria,
+    acceptanceSummary,
+    localOracle,
+    finalOracle
+  };
 }
 
 function isFeatureReady(feature, featureMap) {
@@ -533,7 +611,7 @@ function buildFeatureScope(feature) {
     ? `\n## Notes\n${feature.notes}`
     : '';
   const criteriaSection = feature.acceptanceCriteria.length > 0
-    ? `\n## Acceptance Criteria\n${feature.acceptanceCriteria.map(item => `- ${item}`).join('\n')}`
+    ? `\n## Acceptance Criteria\n${formatAcceptanceCriteriaMarkdown(feature.acceptanceCriteria)}`
     : '';
   return `Feature ${feature.id}: ${feature.title}${criteriaSection}${verifySection}${notesSection}`;
 }
@@ -878,6 +956,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
 
   const nextFeature = selectNextFeature(scan?.featuresBacklog || []);
   const featureGate = evaluateStoryGate(nextFeature);
+  const featureOracle = nextFeature ? buildFeatureOracle(nextFeature, scan) : null;
   const baseTaskProfile = llmResult?.taskProfile || { taskType: 'single', riskLevel: 'medium', scopeGuess: 'multi-file' };
   const effectiveTaskProfile = nextFeature
     ? {
@@ -887,7 +966,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       }
     : baseTaskProfile;
   const { taskType, riskLevel, scopeGuess } = effectiveTaskProfile;
-  const matrixFlags = buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, nextFeature, featureGate);
+  const matrixFlags = buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, nextFeature, featureGate, featureOracle);
 
   // Agent selection: decision tree (llm mode) or keyword fallback
   const agent = MODE_ARG === 'minimal'
@@ -901,15 +980,24 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
   // Determine attachment tier
   const tier = scoreToAttachmentTier(complexity);
   const executionResult = deriveExecutionResult(previousMasterConfig);
-  let continueGate = deriveContinueGate(nextFeature ? `${taskDescription} :: ${nextFeature.id}` : taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, complexity, previousMasterConfig, executionResult);
+  let continueGate = deriveContinueGate(
+    nextFeature ? `${taskDescription} :: ${nextFeature.id}` : taskDescription,
+    project,
+    { ...llmResult, taskProfile: effectiveTaskProfile },
+    scan,
+    complexity,
+    previousMasterConfig,
+    executionResult,
+    { feature: nextFeature, oracle: featureOracle }
+  );
   if (nextFeature && featureGate.splitRequired) {
     continueGate = applySplitRequiredGate(continueGate, nextFeature, featureGate.reasons);
   }
   console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF only' : 'full 6-7 files'})`);
 
   if (nextFeature && featureGate.splitRequired) {
-    const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate);
-    return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature };
+    const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle);
+    return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle };
   }
 
   if (nextFeature) {
@@ -924,7 +1012,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       role: spec.role,
       scope: spec.scope,
       dependsOn: spec.dependsOn,
-      brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, [], matrixFlags, agent, continueGate, codemapPath),
+      brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, [], matrixFlags, agent, continueGate, codemapPath, featureOracle),
       agent,
       attachmentTier: tier
     });
@@ -935,7 +1023,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
         role: spec.role,
         scope: spec.scope,
         dependsOn: spec.dependsOn || [],
-        brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, sprints, matrixFlags, agent, continueGate, codemapPath),
+        brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, sprints, matrixFlags, agent, continueGate, codemapPath, null),
         agent: selectAgentFromId(spec.role),
         attachmentTier: scoreToAttachmentTier(complexity)
       });
@@ -947,29 +1035,30 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       role: spec.role,
       scope: spec.scope,
       dependsOn: [],
-      brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, [], matrixFlags, agent, continueGate, codemapPath),
+      brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, [], matrixFlags, agent, continueGate, codemapPath, null),
       agent,
       attachmentTier: tier
     });
   }
 
-  const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate);
-  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature };
+  const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle);
+  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle };
 }
 
-function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, selectedFeature = null, featureGate = null) {
+function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, selectedFeature = null, featureGate = null, featureOracle = null) {
   const flags = [];
   if (complexity >= 7)  flags.push({ flag: 'COMPLEXITY_HIGH', note: `complexity=${complexity} — PGE-sprint enforced` });
   if (complexity >= 4)  flags.push({ flag: 'COMPLEXITY_MED', note: `complexity=${complexity} — consider multi-sprint` });
   if (riskLevel === 'high') flags.push({ flag: 'RISK_HIGH', note: 'L1 acceptance enforced — no L0 shortcuts' });
   if (scopeGuess === 'cross-layer' || scopeGuess === 'full-rewrite') flags.push({ flag: 'SCOPE_CROSS', note: `scope=${scopeGuess} — affects multiple layers` });
   if (selectedFeature) flags.push({ flag: 'SINGLE_STORY', note: `dispatch only feature ${selectedFeature.id} in this round` });
+  if (featureOracle?.acceptanceCriteria?.length > 0) flags.push({ flag: 'FEATURE_ORACLE', note: `feature carries ${featureOracle.acceptanceCriteria.length} acceptance criteria into oracle chain` });
   if (featureGate?.splitRequired) flags.push({ flag: 'SPLIT_REQUIRED', note: featureGate.reasons.join('; ') });
   if (!selectedFeature && llmResult?.isMultiAgent) flags.push({ flag: 'MULTI_AGENT', note: 'multi-agent sprint plan generated' });
   return flags;
 }
 
-function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate) {
+function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate, featureOracle = null) {
   const flagSection = matrixFlags.length > 0
     ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}\n`
     : '';
@@ -986,6 +1075,15 @@ function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexi
 - **Last Evidence**: ${continueGate.lastEvidence || 'none yet'}
 - **Pivot Trigger**: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch
 ` : '';
+  const featureOracleSection = featureOracle?.acceptanceCriteria?.length > 0 ? `
+## Feature Oracle
+- **Feature**: ${featureOracle.featureId} — ${featureOracle.featureTitle}
+- **Acceptance Summary**: ${featureOracle.acceptanceSummary}
+- **Feature Local Oracle**: ${featureOracle.localOracle}
+
+### Acceptance Criteria
+${formatAcceptanceCriteriaMarkdown(featureOracle.acceptanceCriteria)}
+` : '';
 
   const brief = `# Architectural Brief — ${project.displayName}
 > harness.js v5-preview | ${new Date().toISOString()}
@@ -997,7 +1095,7 @@ function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexi
 - **风险**: ${llmResult?.taskProfile?.riskLevel || 'medium'}
 - **范围**: ${llmResult?.taskProfile?.scopeGuess || 'multi-file'}
 - **Agent**: ${agent.id} (confidence: ${agent.confidence}%)
-${flagSection}${continueGateSection}
+${flagSection}${continueGateSection}${featureOracleSection}
 
 ## 架构要点
 ${llmResult?.enhancedBrief || '无 LLM 分析（minimal/keyword 模式）'}
@@ -1013,9 +1111,12 @@ ${scan.topFiles.slice(0, 10).map(f => `- \`${f.rel}\` (${f.lines}L)`).join('\n')
   return brief;
 }
 
-function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, matrixFlags, agent, continueGate = null, codemapPath = null) {
-  const localOracle = continueGate?.localOracle || scan?.localOracle || '请参考项目实际构建命令';
-  const acceptanceSection = scan ? `## 验收\n\`\`\`bash\ncd "${project.repoPath}" && ${localOracle}\n\`\`\`` : '## 验收\n请参考项目实际构建命令';
+function buildSprintBrief(taskDescription, project, llmResult, scan, spec, priorSprints, matrixFlags, agent, continueGate = null, codemapPath = null, featureOracle = null) {
+  const localOracle = featureOracle?.localOracle || continueGate?.localOracle || scan?.localOracle || '请参考项目实际构建命令';
+  const featureAcceptanceSection = featureOracle?.acceptanceCriteria?.length > 0
+    ? `\n\n## Feature Acceptance Criteria\n${formatAcceptanceCriteriaMarkdown(featureOracle.acceptanceCriteria)}\n\n**Feature Final Oracle**: ${featureOracle.finalOracle}`
+    : '';
+  const acceptanceSection = scan ? `## 验收\n\`\`\`bash\ncd "${project.repoPath}" && ${localOracle}\n\`\`\`${featureAcceptanceSection}` : `## 验收\n请参考项目实际构建命令${featureAcceptanceSection}`;
 
   const codemapSection = codemapPath
     ? `\n## 项目全貌（必读）\n执行任何操作前，请先阅读项目结构索引：\n\`\`\`\nharness/artifacts/codemap.md\n\`\`\`\n其中包含：模块依赖图、API 路由表、数据模型清单、跨目录引用。这些信息对理解代码传播路径和定位 bug 至关重要。\n`
@@ -1151,7 +1252,7 @@ function deriveExecutionResult(previousMasterConfig = null) {
   };
 }
 
-function deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig = null, executionResult = null) {
+function deriveContinueGate(taskDescription, project, llmResult, scan, complexity, previousMasterConfig = null, executionResult = null, featureContext = null) {
   const previousContinueGate = previousMasterConfig?.continueGate || {};
   const branchKey = buildBranchKey(project, taskDescription);
   const evidenceFingerprint = deriveEvidenceFingerprint(taskDescription, llmResult, scan, complexity);
@@ -1200,13 +1301,17 @@ function deriveContinueGate(taskDescription, project, llmResult, scan, complexit
   const previousFinalOracle = hasMeaningfulText(previousContinueGate.finalOracle) ? previousContinueGate.finalOracle : '';
   const previousCurrentBlocker = hasMeaningfulText(previousContinueGate.currentBlocker) ? previousContinueGate.currentBlocker : '';
   const previousNextForcedBet = hasMeaningfulText(previousContinueGate.nextForcedBet) ? previousContinueGate.nextForcedBet : '';
+  const selectedFeature = featureContext?.feature || null;
+  const featureOracle = featureContext?.oracle || null;
 
   const localOracle = LOCAL_ORACLE_INPUT
+    || featureOracle?.localOracle
     || previousLocalOracle
     || scan?.localOracle
     || composeLocalOracle(scan)
     || 'project-local verification command not yet discovered';
   const finalOracle = FINAL_ORACLE_INPUT
+    || featureOracle?.finalOracle
     || previousFinalOracle
     || `Live acceptance for \"${taskDescription}\" plus local oracle: ${localOracle}`;
 
@@ -1263,6 +1368,10 @@ function deriveContinueGate(taskDescription, project, llmResult, scan, complexit
     resultStatus,
     failureType,
     lastEvidence,
+    selectedFeatureId: selectedFeature?.id || '',
+    selectedFeatureTitle: selectedFeature?.title || '',
+    acceptanceCriteria: featureOracle?.acceptanceCriteria || [],
+    acceptanceSummary: featureOracle?.acceptanceSummary || '',
     resultConsumedAt: executionResult?.consumedAt || '',
     explicitInputsApplied: explicitResultInput
   };
@@ -1600,8 +1709,9 @@ async function writePostTaskReport(masterConfig) {
 | Evidence Artifact | ${continueGate?.evidenceArtifact || '⬜ fill'} |
 | Pivot Trigger | ${continueGate?.pivotAfterNoEvidenceRounds || 2} no-evidence rounds |
 | Result Consumed At | ${continueGate?.resultConsumedAt || executionResult?.consumedAt || '⬜ pending'} |
+| Selected Feature | ${continueGate?.selectedFeatureId ? `${continueGate.selectedFeatureId} — ${continueGate.selectedFeatureTitle}` : 'n/a'} |
 
----
+${continueGate?.acceptanceCriteria?.length > 0 ? `### Feature Acceptance Criteria\n${formatAcceptanceCriteriaMarkdown(continueGate.acceptanceCriteria)}\n\n` : ''}---
 
 ## §2 Token Tracking
 
@@ -1640,6 +1750,7 @@ ${executionResult?.whatWasNotDone || '⬜ List incomplete items'}
 |-------|--------|
 | Local Oracle | ${continueGate?.localOracle || '⬜'} |
 | Final Oracle | ${continueGate?.roundOutcome === 'goal_closed' ? '✅ passed' : '⬜ verify / still pending'} |
+| Feature acceptance criteria wired | ${continueGate?.acceptanceCriteria?.length > 0 ? '✅' : '⬜ / n.a.'} |
 | Guard / evidence recorded | ${continueGate?.evidenceArtifact || executionResult?.verificationEvidence ? '✅' : '⬜'} |
 
 ### Verification evidence
@@ -1776,6 +1887,8 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
     if (continueGate.evidenceArtifact) console.log(`Evidence Artifact: ${continueGate.evidenceArtifact}`);
     if (continueGate.failureType) console.log(`Failure Type: ${continueGate.failureType}`);
     if (continueGate.resultStatus) console.log(`Result Status: ${continueGate.resultStatus}`);
+    if (continueGate.selectedFeatureId) console.log(`Selected Feature: ${continueGate.selectedFeatureId} | ${continueGate.selectedFeatureTitle}`);
+    if (continueGate.acceptanceCriteria?.length > 0) console.log(`Feature Acceptance Criteria: ${continueGate.acceptanceCriteria.length}`);
     console.log(`Pivot Trigger: ${continueGate.pivotAfterNoEvidenceRounds} no-evidence rounds on same branch`);
   }
 

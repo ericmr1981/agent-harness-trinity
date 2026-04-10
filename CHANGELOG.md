@@ -1,5 +1,28 @@
 # Progress Log
 
+## 2026-04-10早 — Minimal Ralph Upgrade / Batch 3
+**status:** local done
+
+**本轮完成：**
+- `features.json.acceptanceCriteria` 现在支持**结构化对象**（`id/title/verify/negativeTest/evidence`），同时兼容旧的字符串数组
+- 新增 `buildFeatureOracle()`：把 feature 级 `verify + acceptanceCriteria.verify/negativeTest` 编译成 feature-specific `localOracle / finalOracle`
+- `continueGate` 现携带 `selectedFeatureId / selectedFeatureTitle / acceptanceCriteria / acceptanceSummary`
+- `masterBrief`、`sprint contract`、`post-task report`、CLI summary 现在都会显示 feature acceptance 信息
+- `ContextAssembler` 在 unfinished features 摘要中增加 `acceptanceCriteriaCount`
+
+**验证：**
+- `node --check dev-project-harness-loop/scripts/harness.js` ✅
+- `node --check dev-project-harness-loop/scripts/context-assembler/context-assembler.js` ✅
+- 通过**临时 repo 副本**注入 `F-999` 待办 feature，非 dry-run 跑 harness，确认：
+  - `ACTIVE.md` 含 `FEATURE_ORACLE`
+  - contract / report 显示 `Feature Acceptance Criteria`
+  - `Final Oracle / Local Oracle` 已由 feature criteria 编译生成
+
+**下一步：**
+- 评估是否要做 Batch 4：让 `consume-result` 能按 feature id 自动回写 `features.json` 的 `passes/status`，完成“任务状态 → 验收 → 记录”闭环
+
+---
+
 ## 2026-04-10早 — Minimal Ralph Upgrade / Batch 2
 **status:** local done
 

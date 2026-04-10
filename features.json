@@ -74,5 +74,33 @@
     "dependsOn": [],
     "notes": "Batch 2 of Minimal Ralph Upgrade: appendRoundLearning() 在每轮结果落盘后自动把 entry 写入 repo AGENTS.md 的 <!-- LEARNINGS_BLOCK --> 区块。格式：日期 + roundOutcome + blocker + Insight + Evidence。",
     "verify": "node --check dev-project-harness-loop/scripts/harness.js && rg 'LEARNINGS_BLOCK|appendRoundLearning' dev-project-harness-loop/scripts/harness.js"
+  },
+  {
+    "id": "F-012",
+    "title": "features.json acceptanceCriteria 进入 harness 的 oracle / contract / report 主链",
+    "passes": true,
+    "priority": 12,
+    "size": "S",
+    "status": "done",
+    "dependsOn": [],
+    "notes": "Batch 3 of Minimal Ralph Upgrade: structure acceptanceCriteria, compile featureOracle, feed continueGate/masterBrief/sprint contract/report, and surface acceptance count in ContextAssembler.",
+    "acceptanceCriteria": [
+      {
+        "id": "AC1",
+        "title": "selected feature acceptanceCriteria 被编译为 featureOracle 并覆盖 generic local/final oracle",
+        "verify": "rg 'buildFeatureOracle|acceptanceSummary|selectedFeatureId|selectedFeatureTitle' dev-project-harness-loop/scripts/harness.js"
+      },
+      {
+        "id": "AC2",
+        "title": "sprint contract / post-task report / ACTIVE 都显式显示 feature acceptance 信息",
+        "verify": "rg 'Feature Acceptance Criteria|Feature Oracle|Selected Feature' dev-project-harness-loop/scripts/harness.js"
+      },
+      {
+        "id": "AC3",
+        "title": "ContextAssembler 在 unfinished feature 摘要中带出 acceptanceCriteria 数量",
+        "verify": "rg 'acceptanceCriteriaCount|acceptance=' dev-project-harness-loop/scripts/context-assembler/context-assembler.js"
+      }
+    ],
+    "verify": "node --check dev-project-harness-loop/scripts/harness.js && node --check dev-project-harness-loop/scripts/context-assembler/context-assembler.js && rg 'buildFeatureOracle|Feature Acceptance Criteria|acceptanceCriteriaCount|FEATURE_ORACLE' dev-project-harness-loop/scripts/harness.js dev-project-harness-loop/scripts/context-assembler/context-assembler.js"
   }
 ]

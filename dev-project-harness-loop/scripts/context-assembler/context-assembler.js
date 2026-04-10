@@ -144,6 +144,7 @@ async function gatherFeatures(repoPath) {
       status: f.passes ? 'done' : (f.status || 'todo'),
       priority: Number.isFinite(f.priority) ? f.priority : index + 1,
       size: f.size || '',
+      acceptanceCriteriaCount: Array.isArray(f.acceptanceCriteria) ? f.acceptanceCriteria.length : 0,
       builtin: Boolean(f.builtin)
     }));
 
@@ -158,7 +159,8 @@ async function gatherFeatures(repoPath) {
         passes: f.passes,
         status: f.status,
         priority: f.priority,
-        size: f.size || 'n/a'
+        size: f.size || 'n/a',
+        acceptanceCriteriaCount: f.acceptanceCriteriaCount
       }))
     };
   } catch (_) {}
@@ -431,7 +433,12 @@ function buildPackage({ workDir, task, timestamp, gitState, featuresState, contr
     if (featuresState.unfinished.length > 0) {
       lines.push('### Unfinished:');
       for (const f of featuresState.unfinished) {
-        lines.push(`- [ ] **${f.title}** (${f.priority})`);
+        const extras = [
+          `priority=${f.priority}`,
+          `size=${f.size || 'n/a'}`,
+          `acceptance=${f.acceptanceCriteriaCount || 0}`
+        ].join(' | ');
+        lines.push(`- [ ] **${f.id}: ${f.title}** (${extras})`);
       }
     } else {
       lines.push('✅ All features passing');
