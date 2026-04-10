@@ -151,6 +151,7 @@ download_file() {
 MANIFEST="
 dev-project-harness-loop/SKILL.md             | dev-project-harness-loop/SKILL.md             | core
 dev-project-harness-loop/scripts/harness.js   | dev-project-harness-loop/scripts/harness.js | core
+dev-project-harness-loop/scripts/codemap.js   | dev-project-harness-loop/scripts/codemap.js | core
 dev-project-harness-loop/SKILL-CLI.md         | dev-project-harness-loop/SKILL-CLI.md       | core
 dev-project-harness-loop/scripts/context-assembler/context-assembler.js | dev-project-harness-loop/scripts/context-assembler/context-assembler.js | core
 dev-project-autoloop/SKILL.md                 | dev-project-autoloop/SKILL.md               | core

@@ -1,5 +1,16 @@
 # Progress Log
 
+## 2026-04-10上午 — sync manifest 补齐 codemap.js，确保全局同步不会漏掉
+**status:** local fix ready
+
+**本轮完成：**
+- 将 `dev-project-harness-loop/scripts/codemap.js` 补入 `scripts/sync_skills.sh` 的 `MANIFEST`
+- 修复一个实际漏同步问题：之前即使 repo 已 push、也执行了 `--sync --global`，全局目录里的 `codemap.js` 仍不会更新，因为它根本不在清单里
+
+**验证：**
+- 已确认旧 manifest **缺少** `codemap.js` 条目 ✅
+- 已确认全局目录原先存在旧版 `codemap.js`，但没有 `.synctag` sidecar，且不含 Invocation 反馈字段 ✅
+
 ## 2026-04-10上午 — codemap 增加调用反馈：知道脚本是否真的被调用
 **status:** local verified
 
