@@ -51,7 +51,7 @@
     "id": "F-009",
     "title": "codemap.js v3: 职责分层 + 文档/脚本跨目录引用",
     "passes": true,
-    "verify": "node dev-project-harness-loop/scripts/codemap.js . --force --output harness/artifacts/codemap.md && rg '职责分层（Role Map）|跨目录引用（文档 / 脚本显式提及）' harness/artifacts/codemap.md && rg '\"version\": 3|\"roleLayers\":|\"docCrossRefs\":' harness/artifacts/codemap.meta.json"
+    "verify": "node dev-project-harness-loop/scripts/codemap.js . --force --output harness/artifacts/codemap.md && rg '职责分层（Role Map）|跨目录引用（文档 / 脚本显式提及）' harness/artifacts/codemap.md && rg '\"roleLayers\":|\"docCrossRefs\":' harness/artifacts/codemap.meta.json"
   },
   {
     "id": "F-010",

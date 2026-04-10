@@ -1,5 +1,23 @@
 # Progress Log
 
+## 2026-04-10上午 — codemap.js v4：真实语言检测 + --output 解析修复 + meta 版本升至 4
+**status:** local + mc-gen regression verified
+
+**本轮完成：**
+- **语言检测重构**：用实际源码文件扩展名（`.js/.ts/.tsx/.py/.go`）统计替代旧的 `package.json` 依赖猜測，返回 `"TypeScript + JavaScript + Python"` 等真实混合标签；不再把含 JS 的 Express/React 项目误判为纯 TypeScript
+- **新增语言分布行**：`codemap.md` 基础信息表新增 `语言分布 | js:37 / ts:27 / tsx:19 / py:3` 行，meta.json 同步写入 `langInfo` 块（version → 4）
+- **--output 参数解析修复**：旧的 `find prev index + 1` 在 `--force` 先行时失败；改为顺序无关的标志位解析循环
+- `detectFramework()` 移除已废弃的 `language` 返回字段
+
+**MC-Gen 回归验证：**
+- Language: `TypeScript + JavaScript + Python` ✅（之前错误显示 `TypeScript`）
+- 语言分布：`js:37 / ts:27 / tsx:19 / py:3` ✅（对应 MC-Gen 实际文件数）
+- F-008（无路由假阳性）✅ / F-009（职责分层 + 文档引用）✅
+- meta version: 4 ✅ / langInfo.label ✅
+
+**下一步：**
+- 可选：把 codemap v4 的 verify 命令更新到 features.json（F-008 / F-009 的 `rg '...' codemap.md` 检查逻辑不变）
+
 ## 2026-04-10上午 — sync_skills.sh 修复：untagged 自动收编 + sidecar 版本标记 + force 真正生效
 **status:** local + global verified
 

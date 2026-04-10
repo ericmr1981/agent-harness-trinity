@@ -20,9 +20,28 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const repoPath = process.argv[2] || process.cwd();
-const outputArg = process.argv.find((a, i) => process.argv[i - 1] === '--output');
-const outputPath = outputArg ? process.argv[process.argv.indexOf(outputArg) + 1] : null;
+// ─────────────────────────────────────────────────────────────
+// Argument parsing (order-agnostic, robust)
+// ─────────────────────────────────────────────────────────────
+const FORCE = process.argv.includes('--force');
+let repoPath = null;
+let outputPath = null;
+
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === '--output' || arg === '-o') {
+    outputPath = process.argv[++i] || null;
+  } else if (arg === '--force') {
+    // already handled via includes above; skip
+  } else if (!arg.startsWith('-')) {
+    repoPath = arg; // first non-flag positional = repo path
+  }
+}
+
+repoPath = repoPath || process.cwd();
+if (outputPath && !path.isAbsolute(outputPath)) {
+  outputPath = path.resolve(process.cwd(), outputPath);
+}
 
 const OUT = outputPath || path.join(repoPath, 'harness', 'artifacts', 'codemap.md');
 
@@ -121,33 +140,78 @@ function detectRepoProfile() {
 // ─────────────────────────────────────────────────────────────
 // Framework detection (app repos)
 // ─────────────────────────────────────────────────────────────
+/**
+ * Detect source-language breakdown from actual files.
+ * Returns { languages: {js,ts,tsx,py,go}, primary, label }
+ * where label is like "TypeScript" / "JavaScript" / "TypeScript + JavaScript" / "Python" / "Go"
+ */
+function detectSourceLanguages() {
+  const extCounts = { js: 0, ts: 0, tsx: 0, py: 0, go: 0 };
+  const files = getSrcFiles();
+  for (const f of files) {
+    const ext = path.extname(f).slice(1); // '.tsx' → 'tsx'
+    if (extCounts[ext] !== undefined) extCounts[ext]++;
+  }
+  const { js, ts, tsx, py, go } = extCounts;
+  const total = js + ts + tsx + py + go;
+  const present = Object.entries(extCounts).filter(([, n]) => n > 0).map(([k]) => k);
+
+  let primary = 'unknown';
+  let label = 'unknown';
+
+  if (total === 0) {
+    label = 'unknown';
+  } else if (present.length === 1) {
+    if (present[0] === 'ts') { primary = 'TypeScript'; label = 'TypeScript'; }
+    else if (present[0] === 'tsx') { primary = 'TypeScript (TSX)'; label = 'TypeScript'; }
+    else if (present[0] === 'js') { primary = 'JavaScript'; label = 'JavaScript'; }
+    else if (present[0] === 'py') { primary = 'Python'; label = 'Python'; }
+    else if (present[0] === 'go') { primary = 'Go'; label = 'Go'; }
+  } else {
+    const labels = [];
+    if (ts > 0 || tsx > 0) labels.push('TypeScript');
+    if (js > 0) labels.push('JavaScript');
+    if (py > 0) labels.push('Python');
+    if (go > 0) labels.push('Go');
+    label = labels.join(' + ');
+    // Primary = the extension with the most files
+    const sorted = Object.entries(extCounts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+    primary = sorted[0][0];
+    if (primary === 'ts' || primary === 'tsx') primary = 'TypeScript';
+    else if (primary === 'js') primary = 'JavaScript';
+    else if (primary === 'py') primary = 'Python';
+    else if (primary === 'go') primary = 'Go';
+  }
+
+  return { languages: extCounts, total, primary, label, present };
+}
+
+/**
+ * Detect web / Node.js framework from package.json dependencies.
+ * (Language is now determined by detectSourceLanguages, not here.)
+ */
 function detectFramework() {
   const pkg = safeRun('cat package.json');
-  if (!pkg) return { framework: 'unknown', language: 'unknown', profile: 'non-app repo' };
+  if (!pkg) return { framework: 'unknown' };
   try {
     const pj = JSON.parse(pkg);
     const deps = { ...(pj.dependencies || {}), ...(pj.devDependencies || {}) };
     const pkgJsonDeps = Object.keys(deps);
-    if (pkgJsonDeps.includes('ink') && pkgJsonDeps.includes('react')) {
-      return { framework: 'Node.js/Ink (CLI)', language: 'TypeScript', profile: 'app' };
-    }
-    if (pkgJsonDeps.includes('next')) return { framework: 'Next.js', language: 'TypeScript', profile: 'app' };
-    if (pkgJsonDeps.includes('fastify')) return { framework: 'Fastify', language: 'TypeScript', profile: 'app' };
-    if (pkgJsonDeps.includes('express')) return { framework: 'Express', language: 'TypeScript', profile: 'app' };
-    if (pkgJsonDeps.includes('react') && !pkgJsonDeps.includes('ink')) {
-      return { framework: 'React (web)', language: 'JavaScript', profile: 'app' };
-    }
-    if (pkgJsonDeps.includes('vue')) return { framework: 'Vue', language: 'JavaScript', profile: 'app' };
-    if (pkgJsonDeps.includes('nestjs') || pkgJsonDeps.includes('@nestjs/common')) {
-      return { framework: 'NestJS', language: 'TypeScript', profile: 'app' };
-    }
+    const frameworks = [];
+    if (pkgJsonDeps.includes('ink') && pkgJsonDeps.includes('react')) frameworks.push('Node.js/Ink (CLI)');
+    if (pkgJsonDeps.includes('next')) frameworks.push('Next.js');
+    if (pkgJsonDeps.includes('fastify')) frameworks.push('Fastify');
+    if (pkgJsonDeps.includes('express')) frameworks.push('Express');
+    if (pkgJsonDeps.includes('react') && !pkgJsonDeps.includes('ink')) frameworks.push('React (web)');
+    if (pkgJsonDeps.includes('vue')) frameworks.push('Vue');
+    if (pkgJsonDeps.includes('nestjs') || pkgJsonDeps.includes('@nestjs/common')) frameworks.push('NestJS');
     if (pkgJsonDeps.includes('telegram-bot-api') || pkgJsonDeps.includes('node-telegram-bot-api')) {
-      return { framework: 'Node.js/Telegram Bot', language: 'TypeScript', profile: 'app' };
+      frameworks.push('Node.js/Telegram Bot');
     }
-    if (pj.require?.module === 'go') return { framework: 'Go', language: 'Go', profile: 'app' };
-    return { framework: 'Node.js', language: 'TypeScript', profile: 'app' };
+    const framework = frameworks.length > 0 ? frameworks.join(' + ') : 'Node.js';
+    return { framework };
   } catch (_) {
-    return { framework: 'unknown', language: 'unknown', profile: 'app' };
+    return { framework: 'unknown' };
   }
 }
 
@@ -597,7 +661,7 @@ function extractCrossRefs(files, importRelMap) {
 // Main
 // ─────────────────────────────────────────────────────────────
 async function buildCodemap() {
-  const FORCE = process.argv.includes('--force');
+  // NOTE: FORCE is now set in the argument-parsing block above
   const META_FILE = OUT.replace(/\.md$/, '.meta.json');
 
   const isGitRepo = safeRun('git rev-parse --is-inside-work-tree 2>/dev/null') === 'true';
@@ -635,7 +699,8 @@ async function buildCodemap() {
   console.log(`\n📍 Building CodeMap for: ${repoPath}\n`);
 
   const { profile: repoProfile, isSkillOrHarness } = detectRepoProfile();
-  const { framework, language } = detectFramework();
+  const langInfo = detectSourceLanguages();  // { label, primary, languages, total, present }
+  const { framework } = detectFramework();   // framework still from package.json
   const files = getSrcFiles();
   const { relMap, moduleImports } = extractImports(files);
   const routes = extractApiRoutes(files);
@@ -669,7 +734,7 @@ async function buildCodemap() {
   const lines = [];
   lines.push(`# CodeMap — 项目结构索引`);
   lines.push('');
-  lines.push(`> Auto-generated by codemap.js | ${new Date().toISOString()} | **${repoProfile}** | Framework: **${framework}** | Language: **${language}**`);
+  lines.push(`> Auto-generated by codemap.js | ${new Date().toISOString()} | **${repoProfile}** | Framework: **${framework}** | Language: **${langInfo.label}**`);
   lines.push('');
   lines.push(`## 基础信息`);
   lines.push('');
@@ -681,7 +746,8 @@ async function buildCodemap() {
   lines.push(`| 源码文件数 | ${files.length} |`);
   lines.push(`| 仓库画像 | ${repoProfile} |`);
   lines.push(`| 框架 | ${framework} |`);
-  lines.push(`| 语言 | ${language} |`);
+  lines.push(`| 语言 | ${langInfo.label} |`);
+  lines.push(`| 语言分布 | ${Object.entries(langInfo.languages).filter(([,n])=>n>0).map(([k,n])=>`${k}:${n}`).join(' / ') || 'n/a'} |`);
   lines.push('');
 
   lines.push(`## 目录结构（Depth ≤ 3）`);
@@ -826,9 +892,9 @@ async function buildCodemap() {
   const meta = {
     commit: currentCommit,
     generatedAt: Date.now(),
-    version: 3,
+    version: 4,
     trackedSrcCount,
-    repoProfile,
+    langInfo,
     roleLayers: roleMap.length,
     docCrossRefs: docCrossRefs.length,
   };
@@ -836,6 +902,7 @@ async function buildCodemap() {
 
   console.log(`✅ CodeMap written to: ${OUT}`);
   console.log(`   Repo profile: ${repoProfile}`);
+  console.log(`   Languages: ${langInfo.label} (${Object.entries(langInfo.languages).filter(([,n])=>n>0).map(([k,n])=>`${k}=${n}`).join(', ')})`);
   console.log(`   Files scanned: ${files.length}`);
   console.log(`   Routes found: ${routes.length}`);
   console.log(`   Models found: ${models.length}`);
