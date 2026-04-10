@@ -125,6 +125,7 @@ function detectRepoProfile() {
   const isSkillOrHarness = hasSkillMd || (hasHarnessDir && hasAgentsMd);
   const isOpenClawAgent = hasSkillMd && hasAgentsMd;
   const isMultiAgentTeam = hasSubagentLite || hasHarnessDir;
+  const hasGovernanceLayer = hasHarnessDir || hasAgentsMd;
 
   let profile = 'generic';
   if (isOpenClawAgent) profile = 'OpenClaw agent workspace';
@@ -134,7 +135,7 @@ function detectRepoProfile() {
   else if (hasPackageJson) profile = 'Node.js application';
   else profile = 'unclassified';
 
-  return { profile, isSkillOrHarness };
+  return { profile, isSkillOrHarness, hasSkillMd, hasHarnessDir, hasGovernanceLayer, hasPackageJson };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -698,7 +699,7 @@ async function buildCodemap() {
 
   console.log(`\n📍 Building CodeMap for: ${repoPath}\n`);
 
-  const { profile: repoProfile, isSkillOrHarness } = detectRepoProfile();
+  const { profile: repoProfile, isSkillOrHarness, hasSkillMd, hasHarnessDir, hasGovernanceLayer, hasPackageJson } = detectRepoProfile();
   const langInfo = detectSourceLanguages();  // { label, primary, languages, total, present }
   const { framework } = detectFramework();   // framework still from package.json
   const files = getSrcFiles();
@@ -874,9 +875,13 @@ async function buildCodemap() {
   lines.push(`- 新增 model 先查数据模型，确认已有类型`);
   lines.push(`- Debug 时先看跨目录引用，定位传播路径`);
   lines.push(`- 先看职责分层，再决定是改执行层、合同层、记录层还是守卫层`);
-  if (isSkillOrHarness) {
-    lines.push(`- 本仓库为 **skill / harness** 类型，重点关注 \`SKILL.md\`、\`harness/\` 目录和关键配置文件`);
+  if (hasSkillMd) {
+    lines.push(`- 本仓库是 **skill / harness 模块**；修改前优先检查 \`SKILL.md\`、\`harness/\` 和关键配置文件`);
     lines.push(`- 改动脚本前，优先检查它是否被文档 / 模板 / guard 链路显式引用`);
+  } else if (hasGovernanceLayer && hasPackageJson) {
+    lines.push(`- 本仓库带有 **harness 治理层**；修改核心脚本或入口文件前，优先检查它是否被 \`features.json\`、\`harness/\`、测试、启动脚本或文档显式引用`);
+  } else if (hasHarnessDir) {
+    lines.push(`- 本仓库带有 **harness 层**；修改前优先检查 \`harness/\` 目录和关键配置文件的联动影响`);
   }
   lines.push('');
 

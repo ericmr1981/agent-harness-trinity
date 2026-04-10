@@ -1,5 +1,17 @@
 # Progress Log
 
+## 2026-04-10上午 — codemap 使用建议文案收窄：skill 仓 vs 带 harness 层的业务仓
+**status:** local + mc-gen wording verified
+
+**本轮完成：**
+- 调整 `codemap.js` 的“使用建议”生成逻辑，不再把所有带 `harness/` 的仓库都粗暴描述成 `skill / harness` 类型
+- 对真正的 skill 仓继续提示关注 `SKILL.md` / `harness/` / 关键配置文件
+- 对像 MC-Gen 这样的业务仓，改为提示“本仓库带有 harness 治理层”，并明确检查 `features.json`、`harness/`、测试、启动脚本、文档的显式引用
+
+**验证：**
+- `node --check dev-project-harness-loop/scripts/codemap.js` ✅
+- MC-Gen 重新生成 codemap 后，“使用建议”末条已变为更准确的人话版 ✅
+
 ## 2026-04-10上午 — codemap.js v4：真实语言检测 + --output 解析修复 + meta 版本升至 4
 **status:** local + mc-gen regression verified
 
