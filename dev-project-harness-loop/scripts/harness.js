@@ -1322,6 +1322,150 @@ function resolveFeatureFromMismatch(mismatch, scan) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// P2-8: SCOPE SELECTION REASON — explain why this scope was chosen
+// ─────────────────────────────────────────────────────────────
+/**
+ * Build a structured explanation of WHY this scope was selected.
+ * Written to: plan.scopeSelectionReason + master brief + sprint brief.
+ *
+ * Intent-mode → backlog decision → selected scope → one-line why
+ */
+function buildScopeSelectionReason(intentMode, scopeMismatch, autoSelectedFeature, nextFeature, scan, repoTruth) {
+  const backlog = scan?.featuresBacklog || [];
+  const backlogSummary = `${backlog.filter(f => !f.passes && f.status !== 'done').length} unfinished / ${backlog.length} total`;
+
+  // Backlog decision: used, ignored, overridden
+  let backlogDecision = 'none';
+  let backlogWhy = '';
+  if (scopeMismatch) {
+    if (scopeMismatch.severity === 'hard_error') {
+      if (scopeMismatch.overrideFeatureId) {
+        backlogDecision = 'overridden';
+        backlogWhy = `backlog auto-selected ${autoSelectedFeature?.id || '?'} but user explicitly asked for ${scopeMismatch.overrideFeatureId}`;
+      } else {
+        backlogDecision = 'ignored';
+        backlogWhy = `${intentMode.mode} tasks bypass backlog feature selection`;
+      }
+    } else {
+      backlogDecision = 'used';
+      backlogWhy = `scope mismatch warning only — continuing with auto-selected ${nextFeature?.id || 'none'}`;
+    }
+  } else if (nextFeature) {
+    backlogDecision = 'used';
+    backlogWhy = `backlog returned ${nextFeature.id} as highest-priority pending feature (${backlogSummary})`;
+  } else {
+    backlogDecision = 'none';
+    backlogWhy = `no pending features in backlog (${backlogSummary})`;
+  }
+
+  // Intent resolution summary
+  let intentWhy = '';
+  if (intentMode.explicitFeatureId) {
+    intentWhy = `user explicitly named ${intentMode.explicitFeatureId}`;
+  } else if (intentMode.mode === 'explicit_continue') {
+    intentWhy = `user gave continue directive; resolved to ${intentMode.explicitFeatureId || 'from repo truth'}`;
+  } else if (intentMode.mode === 'repo_wide') {
+    intentWhy = 'task is repo-wide (init/scaffold/audit) — no feature dispatch';
+  } else if (intentMode.mode === 'full_rollout') {
+    intentWhy = 'task signals full project / all features rollout';
+  } else if (intentMode.directive === 'exploratory') {
+    intentWhy = 'exploratory/inspection ask — no feature dispatch';
+  } else if (repoTruth?.activeFeature && intentMode.directive === 'from_active') {
+    intentWhy = `unclear task; repo truth shows active feature ${repoTruth.activeFeature} in progress`;
+  } else if (repoTruth?.activeFeature) {
+    intentWhy = `repo has in-progress feature ${repoTruth.activeFeature}`;
+  } else {
+    intentWhy = 'no explicit intent signal; defaulting to backlog if available';
+  }
+
+  const why = nextFeature
+    ? `Selected ${nextFeature.id} (${nextFeature.title}) — ${intentWhy}. ${backlogWhy}.`
+    : `No feature dispatched — ${intentWhy}. ${backlogWhy}.`;
+
+  return {
+    intentMode: intentMode.mode,
+    explicitFeatureId: intentMode.explicitFeatureId || null,
+    directive: intentMode.directive || null,
+    source: intentMode.source || null,
+    backlogDecision,
+    backlogWhy,
+    selectedFeatureId: nextFeature?.id || null,
+    selectedFeatureTitle: nextFeature?.title || null,
+    backlogSummary,
+    why,
+    scopeMismatchSeverity: scopeMismatch?.severity || null,
+    scopeMismatchMessage: scopeMismatch?.message || null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// P2-9: FEATURE QUEUE & MILESTONE QUEUE — explicit artifact output
+// ─────────────────────────────────────────────────────────────
+/**
+ * Build a sorted list of pending features (excludes done/passing).
+ * Returns: [{ id, title, priority, size, dependsOn, status }]
+ */
+function buildFeatureQueue(scan, currentFeatureId = null) {
+  const backlog = scan?.featuresBacklog || [];
+  return backlog
+    .filter(f => !(f.passes || f.status === 'done'))
+    .filter(f => !currentFeatureId || f.id !== currentFeatureId) // already dispatching → not in queue
+    .sort((a, b) => (a.priority - b.priority) || (a.id < b.id ? -1 : 1))
+    .map(f => ({
+      id: f.id,
+      title: f.title,
+      priority: f.priority,
+      size: f.size || null,
+      dependsOn: f.dependsOn || [],
+      status: f.status,
+    }));
+}
+
+/**
+ * Build a milestone queue from backlog.
+ * For repos with explicit milestones: group features by milestone.
+ * For flat feature lists: treat the whole list as one implied milestone.
+ *
+ * full_rollout / repo_wide → always emit; else → only if backlog has ≥3 pending.
+ */
+function buildMilestoneQueue(intentMode, scan) {
+  const backlog = scan?.featuresBacklog || [];
+  const pending = backlog.filter(f => !(f.passes || f.status === 'done'));
+
+  // Only emit milestone queue in full/multi-feature modes, or when backlog is large enough
+  const threshold = (intentMode.mode === 'full_rollout' || intentMode.mode === 'repo_wide') ? 1 : 3;
+  if (pending.length < threshold) return null;
+
+  // Detect explicit milestone field (some features.json use a milestone property)
+  const hasExplicitMilestones = pending.some(f => f.milestone !== undefined && f.milestone !== null);
+
+  if (hasExplicitMilestones) {
+    const groups = {};
+    for (const f of pending) {
+      const m = String(f.milestone || 'default');
+      if (!groups[m]) groups[m] = [];
+      groups[m].push({ id: f.id, title: f.title, priority: f.priority, status: f.status });
+    }
+    return Object.entries(groups)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([milestone, features]) => ({
+        milestone,
+        features: features.sort((a, b) => a.priority - b.priority),
+        count: features.length,
+      }));
+  }
+
+  // Flat list treated as single implied milestone
+  return [{
+    milestone: '(implied)',
+    features: pending
+      .sort((a, b) => (a.priority - b.priority) || (a.id < b.id ? -1 : 1))
+      .map(f => ({ id: f.id, title: f.title, priority: f.priority, status: f.status })),
+    count: pending.length,
+  }];
+}
+
+// ─────────────────────────────────────────────────────────────
 async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig = null, codemapPath = null) {
   const sprints = [];
   const baseDir = path.join(HARNESS_DIR, 'contracts');
@@ -1405,9 +1549,14 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
   }
   console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF only' : 'full 6-7 files'})`);
 
+  // ── P2-8: Compute scope selection reason + queues (available for all return paths) ──
+  const scopeSelectionReason = buildScopeSelectionReason(intentMode, scopeMismatch, autoSelectedFeature, nextFeature, scan, repoTruth);
+  const featureQueue = buildFeatureQueue(scan, nextFeature?.id || null);
+  const milestoneQueue = buildMilestoneQueue(intentMode, scan);
+
   if (nextFeature && featureGate.splitRequired) {
-    const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle);
-    return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle };
+    const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue);
+    return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue };
   }
 
   if (nextFeature) {
@@ -1451,8 +1600,8 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
     });
   }
 
-  const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle);
-  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle };
+  const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue);
+  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue };
 }
 
 function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, selectedFeature = null, featureGate = null, featureOracle = null) {
@@ -1468,10 +1617,30 @@ function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, selected
   return flags;
 }
 
-function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate, featureOracle = null) {
+function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate, featureOracle = null, scopeSelectionReason = null, featureQueue = null, milestoneQueue = null) {
   const flagSection = matrixFlags.length > 0
     ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}\n`
     : '';
+
+  // P2-8: Scope selection reason section
+  const scopeReasonSection = scopeSelectionReason ? `
+## Why This Scope
+- **Intent Mode**: ${scopeSelectionReason.intentMode}${scopeSelectionReason.directive ? ` (directive: ${scopeSelectionReason.directive})` : ''}
+- **Backlog Decision**: ${scopeSelectionReason.backlogDecision} — ${scopeSelectionReason.backlogWhy}
+- **Selection**: ${scopeSelectionReason.why}
+${scopeSelectionReason.scopeMismatchSeverity ? `- **Scope Mismatch**: [${scopeSelectionReason.scopeMismatchSeverity.toUpperCase()}] ${scopeSelectionReason.scopeMismatchMessage || ''}` : ''}
+` : '';
+
+  // P2-9: Feature queue section
+  const featureQueueSection = (featureQueue && featureQueue.length > 0) ? `\n## Feature Queue (next up)
+${featureQueue.map(f => `- **[${f.id}]** ${f.title} | priority=${f.priority}${f.size ? ` size=${f.size}` : ''}${f.dependsOn?.length ? ` deps=${f.dependsOn.join(',')}` : ''}`).join('\n')}
+` : (featureQueue !== null ? `\n## Feature Queue
+_All features passing or none pending._\n` : '');
+
+  // P2-9: Milestone queue section
+  const milestoneQueueSection = (milestoneQueue && milestoneQueue.length > 0) ? `\n## Milestone Roadmap
+${milestoneQueue.map(m => `### ${m.milestone === '(implied)' ? 'Feature Backlog (implied)' : m.milestone} (${m.count} features)\n${m.features.map(f => `- **[${f.id}]** ${f.title}`).join('\n')}`).join('\n')}
+` : '';
 
   const continueGateSection = continueGate ? `
 ## Continue Gate (v5 preview)
@@ -1505,7 +1674,7 @@ ${formatAcceptanceCriteriaMarkdown(featureOracle.acceptanceCriteria)}
 - **风险**: ${llmResult?.taskProfile?.riskLevel || 'medium'}
 - **范围**: ${llmResult?.taskProfile?.scopeGuess || 'multi-file'}
 - **Agent**: ${agent.id} (confidence: ${agent.confidence}%)
-${flagSection}${continueGateSection}${featureOracleSection}
+${flagSection}${scopeReasonSection}${continueGateSection}${featureOracleSection}${featureQueueSection}${milestoneQueueSection}
 
 ## 架构要点
 ${llmResult?.enhancedBrief || '无 LLM 分析（minimal/keyword 模式）'}
@@ -2064,6 +2233,11 @@ async function writeContinueGateArtifact(masterConfig) {
     lifecycle: masterConfig.lifecycle,
     continueGate: masterConfig.continueGate,
     executionResult: masterConfig.executionResult,
+    // P2-8: scope selection reason
+    scopeSelectionReason: masterConfig.plan?.scopeSelectionReason || null,
+    // P2-9: feature and milestone queues
+    featureQueue: masterConfig.plan?.featureQueue || null,
+    milestoneQueue: masterConfig.plan?.milestoneQueue || null,
     updatedAt: new Date().toISOString()
   };
   await writeFile(artifactPath, JSON.stringify(payload, null, 2));
