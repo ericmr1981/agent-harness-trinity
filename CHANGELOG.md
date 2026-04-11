@@ -15,6 +15,21 @@
 
 ---
 
+## [Pending] Round 3：Attachment Profile 差异化 + Brief 增强
+**目标：** 让附件策略和 Brief 内容真正跟随 context profile 差异化
+
+**待改项：**
+1. `buildAttachments`：按 `plan.attachmentTier`（minimal/standard/full）+ `plan.contextProfile` 生成 3 种密度附件
+   - minimal: 无附件
+   - standard: TEMPLATE_BRIEF + sprint contract + focused snippets（contextAssembler 产出的 focused snippets）
+   - full: 上述全部 + features.json + codemap.md + master-brief.md
+2. `buildMasterBrief`：新增 `## Planning Signals` section（输出四维分数）+ `## Context Profile` 说明
+3. `printReport`：输出改为 `Context Profile + Planning Signals` 而非旧 complexity 格式
+4. `--continue` 模式：自动从 `harness/context/` 读取最新 context-package + registry.json
+5. ContextAssembler `--include-handoffs` on-demand flag（目前 handoffs section 默认关闭）
+
+---
+
 ## 2026-04-11傍晚 — Round 1：索引与项目宪章收口
 **refs:** `af211f3`
 **status:** local verified
