@@ -65,7 +65,7 @@ Regression：改 bug 时 baseline diff 必须 clean。
 
 ## Minimal File Requirements（repo 内）
 
-`CLAUDE.md` · `AGENTS.md` · `features.json` · `CHANGELOG.md` · `init.sh` · `harness.json` · `tests/`
+`AGENTS.md` · `features.json` · `CHANGELOG.md` · `init.sh` · `harness.json` · `harness/goal.md` · `tests/`
 
 缺失时：`bash project-harness-guards/scripts/scaffold_harness.sh`
 

@@ -19,7 +19,7 @@ fi
 # Run all checks from project root.
 cd "$ROOT"
 
-req_files=("CLAUDE.md" "AGENTS.md" "features.json" "init.sh")
+req_files=("AGENTS.md" "features.json" "init.sh")
 missing=0
 for f in "${req_files[@]}"; do
   if [[ ! -f "$f" ]]; then

@@ -17,7 +17,7 @@ Run a project as a **bounded bet loop** that is resumable across context windows
 
 ## Startup protocol (every session)
 
-1) Read **goal + constraints** (repo docs if present: `CLAUDE.md`, `AGENTS.md`).
+1) Read **goal + constraints** (repo docs: `harness/goal.md`, `AGENTS.md`).
 2) Read **current state**:
    - `git log -n 20 --oneline` (or equivalent)
    - progress log: `CHANGELOG.md` / `claude-progress.txt`
@@ -82,7 +82,7 @@ Pause when:
 
 ## If the project needs governance
 
-If you observe missing harness pieces (no `CLAUDE.md`, no progress log, no oracle), switch to the parent workflow:
+If you observe missing harness pieces (no `harness/goal.md`, no progress log, no oracle), switch to the parent workflow:
 - `dev-project-harness-loop` (or scaffold with `project-harness-guards`).
 
 ## References

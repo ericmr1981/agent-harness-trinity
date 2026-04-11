@@ -35,8 +35,7 @@ const CONTINUE_GATE_ARTIFACTS_DIR = path.join(HARNESS_ARTIFACTS_DIR, 'continue-g
 const ORACLES_DIR     = path.join(HARNESS_DIR, 'oracles');            // P1-5: per-repo oracle registry (relative to WORKSPACE)
 const ORACLES_FILE    = path.join(ORACLES_DIR, 'registry.json');     // P1-5: oracle registry file (relative to WORKSPACE)
 const WORKSPACE_ROOT = WORKSPACE;                                          // workspace root (parent of all project repos)
-const WORKSPACE_INDEX = path.join(WORKSPACE_ROOT, 'WORKSPACE.md');         // project index (not content)
-const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');                 // legacy tasks index
+const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');                 // single project registry index
 const GITHUB_ROOT    = process.env.GITHUB_ROOT || '/Users/ericmr/Documents/GitHub';
 const MASTER_CONFIG_FILE = path.join(WORKSPACE, '.harness-master.json');
 
@@ -375,8 +374,8 @@ async function inferProjectFromGithub(lower) {
  */
 async function preflightHarnessCheck(repoPath) {
   const minHarness = [
-    'CLAUDE.md',
     'AGENTS.md',
+    'harness/goal.md',
     'scripts/run_change_guard.sh',
   ];
 
@@ -389,7 +388,7 @@ async function preflightHarnessCheck(repoPath) {
     console.log('\n⚠️  HARNESS PRE-FLIGHT: Project not Trinity-initialized');
     console.log('   Missing: ' + missing.join(', '));
     console.log('   Recommendation: Initialize first:');
-    console.log('     bash project-harness-guards/scripts/scaffold_harness.sh "${repoPath}"');
+    console.log('     bash project-harness-guards/scripts/scaffold_harness.sh "$repoPath"');
     console.log('   Or run with --no-preflight to skip.\n');
   } else {
     console.log('   ✅ Minimum harness detected');
@@ -2101,58 +2100,92 @@ async function dispatchSingleSprint(sprint, masterBrief, briefPath, globalMatrix
  * ## Current Focus
  * - wdg（可切换）
  */
-async function ensureWorkspaceIndex(project, taskDescription, plan, activeStatus = 'running') {
-  let indexContent = '';
-  let entries = [];
+async function ensureTASKSIndex(project, activeStatus = 'running') {
+  const TASKS_PATH = path.join(WORKSPACE, 'TASKS.md');
+  let catalog = [];
 
   try {
-    const raw = await readFile(WORKSPACE_INDEX, 'utf8');
-    // Extract existing entries by parsing the table rows
-    const tableMatch = raw.match(/\| Project(.+?)\n[^|]*$/s);
-    if (tableMatch) {
-      const rows = raw.split('\n').filter(l => l.trim().startsWith('|') && !l.includes('---') && !l.includes('Project |'));
-      for (const row of rows) {
-        const cols = row.split('|').map(c => c.trim()).filter(Boolean);
-        if (cols.length >= 3) entries.push({ project: cols[0], activePath: cols[1], status: cols[2], updated: cols[3] || '' });
+    const raw = await readFile(TASKS_PATH, 'utf8');
+    const allSection = raw.includes('## All Projects') ? raw.split('## All Projects')[1] : '';
+    const rows = allSection.split('\n').filter(line => /^\|\s*\d+\s*\|/.test(line.trim()));
+    for (const row of rows) {
+      const cols = row.split('|').map(c => c.trim()).filter(Boolean);
+      if (cols.length >= 4) {
+        catalog.push({
+          project: cols[1],
+          repo: cols[2].replace(/`/g, ''),
+          activeMd: 'ACTIVE.md',
+          status: cols[3],
+          notes: cols[4] || '',
+        });
       }
     }
   } catch (_) {
-    // No index yet — start fresh
-    indexContent = `# WORKSPACE Index
-
-> Managed by harness.js v5-preview | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
-
-## Active Projects
-| Project | ACTIVE.md Path | Status | Last Updated |
-|---------|----------------|--------|--------------|
-`;
+    catalog = [];
   }
 
-  // Update or add entry for this project
-  const activePath = path.join(project.repoPath, 'ACTIVE.md');
   const updated = new Date().toISOString().replace('T', ' ').slice(0, 16);
-  const existingIdx = entries.findIndex(e => e.project === project.displayName || e.project.toLowerCase() === project.displayName.toLowerCase());
+  const existingIdx = catalog.findIndex(e =>
+    e.project === project.displayName ||
+    e.project.toLowerCase() === project.displayName.toLowerCase() ||
+    e.repo === project.repoPath
+  );
+
   if (existingIdx >= 0) {
-    entries[existingIdx] = { project: project.displayName, activePath, status: activeStatus, updated };
+    catalog[existingIdx] = {
+      ...catalog[existingIdx],
+      project: project.displayName,
+      repo: project.repoPath,
+      activeMd: 'ACTIVE.md',
+      status: activeStatus,
+    };
   } else {
-    entries.push({ project: project.displayName, activePath, status: activeStatus, updated });
+    catalog.push({
+      project: project.displayName,
+      repo: project.repoPath,
+      activeMd: 'ACTIVE.md',
+      status: activeStatus,
+      notes: project.displayName === 'agent-harness-trinity' ? 'Trinity skill suite master repo' : '',
+    });
   }
 
-  // Rebuild index
-  const rows = entries.map(e => `| ${e.project} | \`${e.activePath}\` | ${e.status} | ${e.updated} |`).join('\n');
-  const header = `# WORKSPACE Index
+  const activeRows = catalog
+    .filter(e => ['running', 'goal_closed', 'blocked'].includes(e.status))
+    .map(e => `| ${e.project} | \`${e.repo}\` | \`ACTIVE.md\` | ${e.status} | ${updated} |`)
+    .join('\n');
 
-> Managed by harness.js v5-preview | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
+  const allRows = catalog
+    .map((e, i) => `| ${i + 1} | ${e.project} | \`${e.repo}\` | ${e.status} | ${e.notes || ''} |`)
+    .join('\n');
+
+  const content = `# TASKS.md — Project Registry & Active Index
+
+> This is the **only** project index. It is both the catalog of all known projects and the active-working-set tracker.
+> Managed by harness.js | **Do not edit content directly — use \`ACTIVE.md\` in each project repo**
+
+---
 
 ## Active Projects
-| Project | ACTIVE.md Path | Status | Last Updated |
-|---------|----------------|--------|--------------|
+
+| Project | Repo | ACTIVE.md | Status | Last Updated |
+|---------|------|-----------|--------|--------------|
+${activeRows || '| | | | | |'}
+
+---
+
+## All Projects
+
+> Add new projects here when they first receive a harness.
+
+| # | Project | Repo | Status | Notes |
+|---|---------|------|--------|-------|
+${allRows || '| 1 | workspace | \`' + project.repoPath + '\` | ' + activeStatus + ' | |'}
 `;
 
-  indexContent = header + rows + '\n';
-  await writeFile(WORKSPACE_INDEX, indexContent);
-  console.log(`   🗂  Workspace index updated: ${WORKSPACE_INDEX}`);
+  await writeFile(TASKS_PATH, content);
+  console.log(`   🗂  TASKS.md updated: ${TASKS_PATH}`);
 }
+
 
 // ─────────────────────────────────────────────────────────────
 async function updateActive(project, taskDescription, plan) {
@@ -2186,7 +2219,7 @@ async function updateActive(project, taskDescription, plan) {
 
   const content = `# ACTIVE.md — Current WIP
 
-> This file lives inside the project repo. The workspace root WORKSPACE.md is only an index.
+> This file lives inside the project repo. TASKS.md is the only project index.
 
 ## Current Project
 - **Name**: ${project.displayName}
@@ -2207,7 +2240,7 @@ ${plan.sprints.map(s => {
 ${masterBriefPath}
 
 ## Version
-harness.js v5-preview | per-project ACTIVE.md | workspace index | ContextAssembler
+harness.js v5-preview | per-project ACTIVE.md | TASKS.md index | ContextAssembler
 
 ---
 *Last updated: ${new Date().toISOString()}*
@@ -2216,8 +2249,8 @@ harness.js v5-preview | per-project ACTIVE.md | workspace index | ContextAssembl
   await writeFile(projectActiveFile, content);
   console.log(`   ✅ ACTIVE.md written to project repo: ${projectActiveFile}`);
 
-  // Update workspace root index
-  await ensureWorkspaceIndex(project, taskDescription, plan, activeStatus);
+  // Update TASKS.md index
+  await ensureTASKSIndex(project, activeStatus);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2502,7 +2535,7 @@ function printReport(project, taskDescription, llmResult, plan, complexity, toke
   console.log('\n' + '='.repeat(70));
   console.log(`\n✅ harness.js v5-preview ${CONSUME_RESULT ? 'result consumption' : 'dispatch'} complete`);
   console.log('   ACTIVE.md written to project repo (per-project isolation)');
-  console.log('   Workspace index updated: WORKSPACE.md');
+  console.log('   TASKS.md index updated');
   console.log('   Continue gate synced into report + harness/artifacts/continue-gate');
   if (!CONSUME_RESULT) {
     console.log('   Next: confirm with Boss → sessions_spawn dispatch');

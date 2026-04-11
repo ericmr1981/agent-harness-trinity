@@ -6,7 +6,7 @@ echo "=== Trinity smoke test ==="
 
 # 1. Check required files exist
 echo "--- drift check ---"
-required="CLAUDE.md AGENTS.md CHANGELOG.md features.json init.sh harness.json"
+required="AGENTS.md CHANGELOG.md features.json init.sh harness.json harness/goal.md"
 for f in $required; do
   if [[ ! -f "$f" ]]; then
     echo "[FAIL] missing: $f"

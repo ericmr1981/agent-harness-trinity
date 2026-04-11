@@ -118,7 +118,7 @@ bash scripts/install_skills.sh --dest /usr/local/lib/node_modules/openclaw/skill
 ```bash
 cd /path/to/your/project
 bash /path/to/agent-harness-trinity/project-harness-guards/scripts/scaffold_harness.sh
-# 生成：CLAUDE.md, AGENTS.md, features.json, init.sh, harness.json, docs/, tests/
+# 生成：AGENTS.md, features.json, init.sh, harness.json, harness/goal.md, docs/, tests/
 ```
 
 ---
@@ -235,7 +235,6 @@ bash scripts/run_change_guard.sh
 
 ```
 agent-harness-trinity/
-├── CLAUDE.md                          ← 项目使命
 ├── dev-project-harness-loop/          ← 核心执行环路
 │   ├── SKILL.md
 │   ├── scripts/harness.js             ← /harness 命令引擎

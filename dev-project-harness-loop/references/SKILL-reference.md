@@ -23,7 +23,7 @@ Also:
 ## Step 0) Ensure the harness exists (initializer phase)
 
 Minimum harness files (repo-local):
-- `CLAUDE.md`, `AGENTS.md`, `features.json`, `CHANGELOG.md` (or `claude-progress.txt`), `init.sh`, `harness.json`, `tests/`
+- `AGENTS.md`, `features.json`, `CHANGELOG.md` (or `claude-progress.txt`), `init.sh`, `harness.json`, `harness/goal.md`, `tests/`
 
 If missing:
 - use `project-harness-guards` to scaffold
@@ -43,9 +43,9 @@ At session start, always:
 
 **Per-project ACTIVE.md:**
 - Project state lives **inside each project repo** as `ACTIVE.md`
-- The workspace root only has `WORKSPACE.md` — a lightweight index (no project content)
+- TASKS.md is the single project registry index (replaces old WORKSPACE.md)
 - When resuming a project: read `ACTIVE.md` from that project's repo, not workspace root
-- On new dispatch: `updateActive()` writes to `<project-repo>/ACTIVE.md` and updates `WORKSPACE.md` index
+- On new dispatch: `updateActive()` writes to `<project-repo>/ACTIVE.md` and updates `TASKS.md` index
 
 ## Step 1.5) ContextAssembler
 
@@ -154,7 +154,7 @@ See: `references/failure-recovery-protocol.md`
 ## Step 9) Auto-Resume
 
 At session start:
-1. Read WORKSPACE.md → find active project index
+1. Read TASKS.md → find active project index
 2. Read per-project ACTIVE.md → check for running session
 3. If running: fetch session history, extract handoff, resume
 4. If not running: read harness truth

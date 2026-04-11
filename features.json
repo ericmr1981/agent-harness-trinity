@@ -26,9 +26,9 @@
   },
   {
     "id": "F-005",
-    "title": "CLAUDE.md / AGENTS.md / harness/goal.md 内容完整",
+    "title": "harness/goal.md + AGENTS.md 内容完整",
     "passes": true,
-    "verify": "grep -c 'TODO' CLAUDE.md AGENTS.md harness/goal.md | grep -q '0'"
+    "verify": "grep -c 'TODO' AGENTS.md harness/goal.md | grep -q '0'"
   },
   {
     "id": "F-006",

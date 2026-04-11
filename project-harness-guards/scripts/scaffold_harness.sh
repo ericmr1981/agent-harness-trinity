@@ -46,27 +46,6 @@ write_file() {
   echo "[write] $path"
 }
 
-write_file "CLAUDE.md" <<'EOF'
-# Project Mission (CLAUDE.md)
-
-## Mission
-- TODO
-
-## Acceptance target
-- TODO (must be verifiable)
-
-## Non-goals
-- TODO
-
-## Constraints
-- Keep changes bounded and reversible
-- Do not claim done without verification evidence
-
-## Approval boundaries
-- Deployment / destructive actions
-- Credentials / billing / external side effects
-- Product direction pivots
-EOF
 
 write_file "AGENTS.md" <<'EOF'
 # AGENTS.md (index)
@@ -74,7 +53,7 @@ write_file "AGENTS.md" <<'EOF'
 Keep this file short (~100 lines).
 
 ## Where to look
-- Mission + global rules: CLAUDE.md
+- Mission + constraints: harness/goal.md
 - Goal contract: harness/goal.md
 - Current progress: CHANGELOG.md
 - Structured checklist: features.json
@@ -83,7 +62,7 @@ Keep this file short (~100 lines).
 - Quality/tech debt: docs/quality.md
 
 ## Default loop
-1) Read CLAUDE.md + harness/goal.md + CHANGELOG.md
+1) Read harness/goal.md + AGENTS.md + CHANGELOG.md
 2) Pick one bounded bet that most reduces distance to the final goal
 3) Implement + verify
 4) Commit + log (include commit hash)
@@ -128,6 +107,9 @@ EOF
 write_file "harness/goal.md" <<'EOF'
 # Goal Contract
 
+## Mission
+- TODO
+
 ## Final goal
 - TODO
 
@@ -140,7 +122,8 @@ write_file "harness/goal.md" <<'EOF'
 - TODO
 
 ## Constraints
-- TODO
+- Keep changes bounded and reversible
+- Do not claim done without verification evidence
 
 ## Approval boundaries
 - Deployment / destructive actions
@@ -225,7 +208,7 @@ fi
 
 cd "$ROOT"
 
-req_files=("CLAUDE.md" "AGENTS.md" "features.json" "init.sh")
+req_files=("AGENTS.md" "features.json" "init.sh")
 missing=0
 for f in "${req_files[@]}"; do
   if [[ ! -f "$f" ]]; then
@@ -367,4 +350,4 @@ if [[ ! -f "scripts/run_drift_check.sh" ]]; then
   echo "       or re-run with --install-guards"
 fi
 
-echo "Done. Next: fill CLAUDE.md + harness/goal.md, set harness.json commands, then add a runnable test oracle."
+echo "Done. Next: fill harness/goal.md + AGENTS.md, set harness.json commands, then add a runnable test oracle."

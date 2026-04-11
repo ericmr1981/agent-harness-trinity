@@ -1,6 +1,6 @@
 ---
 name: project-harness-guards
-description: Create or upgrade a project harness so long-running agents can make goal-closed progress with durable records and evidence. Use when starting a new agent-driven project, when a repo lacks CLAUDE.md/AGENTS.md/features.json/init.sh/CHANGELOG.md/tests, when progress claims need auditability, or when you need drift/change guards before accepting milestones.
+description: Create or upgrade a project harness so long-running agents can make goal-closed progress with durable records and evidence. Use when starting a new agent-driven project, when a repo lacks AGENTS.md/features.json/init.sh/CHANGELOG.md/harness/goal.md/tests, when progress claims need auditability, or when you need drift/change guards before accepting milestones.
 ---
 
 # Project Harness Guards
@@ -25,7 +25,7 @@ A harness is the smallest set of files that allows:
 - **stay goal-closed** (do not stop at arbitrary phase boundaries)
 
 Minimum expected files (repo-local unless explicitly external):
-- `CLAUDE.md` — mission + global constraints + acceptance target
+- `harness/goal.md` — mission + final goal + non-goals + constraints + approval boundaries
 - `AGENTS.md` — short index to truth sources (keep ~100 lines)
 - `CHANGELOG.md` or `claude-progress.txt` — progress + failed attempts (must mention commit hashes)
 - `features.json` — structured checklist with `passes: false|true`

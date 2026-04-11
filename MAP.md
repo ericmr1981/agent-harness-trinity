@@ -188,7 +188,7 @@
 
 ```
 Phase 1: discoverProject()
-    输入：taskDescription, TASKS.md, ACTIVE.md, github-scan
+    输入：taskDescription, TASKS.md, github-scan
     输出：project { displayName, repoPath }
     产物：-
 

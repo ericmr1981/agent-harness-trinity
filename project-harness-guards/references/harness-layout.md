@@ -8,7 +8,6 @@ Make the repo itself the agent’s resumable operating environment.
 
 ```
 /project
-├── CLAUDE.md                # mission + constraints + acceptance
 ├── AGENTS.md                # ~100-line index to truth sources
 ├── harness.json             # commands + paths + acceptance summary
 ├── HARNESS_LINKS.md         # optional: repo ↔ external record-root mapping

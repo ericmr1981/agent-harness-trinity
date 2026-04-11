@@ -299,7 +299,6 @@ function getNonCodeFiles() {
     // Root-level project docs
     { pattern: 'README.md', type: 'md', purpose: '项目说明' },
     { pattern: 'AGENTS.md', type: 'md', purpose: 'Agent 工作区定义' },
-    { pattern: 'CLAUDE.md', type: 'md', purpose: '项目使命宪章' },
     { pattern: 'MAP.md', type: 'md', purpose: '文件关系图' },
     { pattern: 'CHANGELOG.md', type: 'md', purpose: '变更日志' },
     { pattern: 'features.json', type: 'json', purpose: 'Feature 检查清单' },
@@ -353,7 +352,7 @@ function classifyArtifact(relPath) {
   if (base === 'SKILL.md' || /\/SKILL\.md$/.test(p) || /^skills\//.test(p) || /^kickoff\//.test(p) || /^harness\//.test(p) && base === 'SKILL.md') {
     return '技能 / 入口层';
   }
-  if (/^docs\//.test(p) || /^.*\/references\//.test(p) || ['README.md', 'MAP.md', 'AGENTS.md', 'CLAUDE.md'].includes(p)) {
+  if (/^docs\//.test(p) || /^.*\/references\//.test(p) || ['README.md', 'MAP.md', 'AGENTS.md', 'harness/goal.md'].includes(p)) {
     return '文档 / 导航层';
   }
   if (/\.(ts|tsx|js|jsx|go|py)$/.test(p)) {

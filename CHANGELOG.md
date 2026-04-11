@@ -1,5 +1,24 @@
 # Progress Log
 
+## 2026-04-11傍晚 — Round 1：索引与项目宪章收口
+**refs:** `af211f3`
+**status:** local verified
+
+**本轮完成：**
+- 删除 repo 级 `CLAUDE.md`，将项目使命 / 约束并入 `harness/goal.md`
+- 新增 `TASKS.md` 作为唯一项目索引，停用旧 `WORKSPACE.md`
+- `harness.js` 不再维护 `WORKSPACE.md`，改写 `TASKS.md` 活跃项目索引
+- `run_drift_check.sh` / `smoke.sh` / `scaffold_harness.sh` / README / SKILL docs 同步到新最小文件集
+- 清理旧的 tracked runtime artifacts（`harness/assignments/assign-*.md`、`harness/contracts/sprint-*.md`）并补全 `.gitignore`
+
+**验证：**
+- `bash init.sh` ✅
+- `bash scripts/run_drift_check.sh` ✅
+- `bash tests/smoke.sh` ✅
+- `bash tests/regressions.sh` ✅
+- `bash scripts/run_trinity_guard.sh` ✅
+- `node --check dev-project-harness-loop/scripts/harness.js` ✅
+
 ## 2026-04-11下午 — 最小修补：codemap 噪音、shell 统计、self-contained regressions
 **refs:** `f0c1806`
 **status:** local verified
