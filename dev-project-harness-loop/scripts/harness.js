@@ -1194,9 +1194,17 @@ function detectIntentMode(taskDescription, scan, repoTruth = null) {
   ];
   const hasRepoWideIntent = repoWideKeywords.some(kw => lower.includes(kw));
 
-  // Size signal: if task is complex AND user says "multiple / 多个 / 全面"
-  const isComplexTask = (scan && scan.topFiles && scan.topFiles.length > 5) ||
-    ['多个', '全面', '完整', '整个', '所有', 'multiple', 'full', 'complete'].some(kw => lower.includes(kw));
+  // Repo-size and breadth signals must BOTH be present before we infer full-rollout.
+  const isComplexRepo = Boolean(scan && scan.topFiles && scan.topFiles.length > 5);
+  const breadthKeywords = ['多个', '全面', '完整', '整个', '所有', 'multiple', 'full', 'complete'];
+  const hasBreadthSignal = breadthKeywords.some(kw => lower.includes(kw));
+
+  // Generic inspection / exploratory asks are NOT rollout intent.
+  const exploratoryKeywords = [
+    '看看', '看一下', '帮我看看', '看看这个项目', '看看项目', '看这个项目',
+    'inspect', 'take a look', 'look at', 'review this project', 'look through'
+  ];
+  const hasExploratoryIntent = exploratoryKeywords.some(kw => lower.includes(kw));
 
   // ── Decision tree (order matters!) ───────────────────────────
   // Priority 1: explicit feature + directive → explicit_continue (MUST be first)
@@ -1211,11 +1219,15 @@ function detectIntentMode(taskDescription, scan, repoTruth = null) {
   if (hasDirective) {
     return { mode: 'unclear_but_has_directive', explicitFeatureId: null, directive: 'directive_without_feature_id' };
   }
-  // Priority 4: full rollout (check BEFORE repo_wide so "init whole project" → full_rollout)
-  if (hasFullRolloutIntent || (isComplexTask && hasDirective === false)) {
+  // Priority 4: explicit exploratory / inspection asks stay unclear, even on large repos
+  if (hasExploratoryIntent) {
+    return { mode: 'unclear', explicitFeatureId: null, directive: 'exploratory' };
+  }
+  // Priority 5: full rollout needs explicit rollout keywords OR broad wording on a complex repo
+  if (hasFullRolloutIntent || (isComplexRepo && hasBreadthSignal && hasDirective === false)) {
     return { mode: 'full_rollout', explicitFeatureId: null, directive: null };
   }
-  // Priority 5: repo-wide (audit, scaffold — NOT project implementation)
+  // Priority 6: repo-wide (audit, scaffold — NOT project implementation)
   if (hasRepoWideIntent) {
     return { mode: 'repo_wide', explicitFeatureId: null, directive: null };
   }
