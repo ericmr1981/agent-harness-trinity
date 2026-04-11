@@ -32,6 +32,8 @@ const HARNESS_DIR    = path.join(WORKSPACE, 'harness');
 const REPORTS_DIR    = path.join(HARNESS_DIR, 'reports');
 const HARNESS_ARTIFACTS_DIR = path.join(HARNESS_DIR, 'artifacts');
 const CONTINUE_GATE_ARTIFACTS_DIR = path.join(HARNESS_ARTIFACTS_DIR, 'continue-gate');
+const ORACLES_DIR     = path.join(HARNESS_DIR, 'oracles');            // P1-5: per-repo oracle registry (relative to WORKSPACE)
+const ORACLES_FILE    = path.join(ORACLES_DIR, 'registry.json');     // P1-5: oracle registry file (relative to WORKSPACE)
 const WORKSPACE_ROOT = WORKSPACE;                                          // workspace root (parent of all project repos)
 const WORKSPACE_INDEX = path.join(WORKSPACE_ROOT, 'WORKSPACE.md');         // project index (not content)
 const TASKS_FILE     = path.join(WORKSPACE, 'TASKS.md');                 // legacy tasks index
@@ -389,7 +391,7 @@ async function scanRepo(repoPath) {
 
   try {
     const output = execSync(
-      `find "${repoPath}" -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.cs" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" 2>/dev/null`,
+      `find "${repoPath}" -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.cs" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" ! -path "*/.venv/*" ! -path "*/site-packages/*" ! -path "*/.venv/*/" ! -path "*/site-packages/*/" 2>/dev/null`,
       { encoding: 'utf8', timeout: 15000 }
     );
     srcFiles = output.split('\n').filter(Boolean).slice(0, 80).map(f => {
@@ -423,6 +425,43 @@ async function scanRepo(repoPath) {
     }
   } catch (_) {}
 
+  // ── Python oracle discovery (P0 fix: find real test commands) ──
+  let pythonTestCmd = 'none';
+  try {
+    // Check scripts/validate.sh (Trinity convention)
+    if (execSync(`test -f "${repoPath}/scripts/validate.sh" && echo yes`, { encoding: 'utf8' }).includes('yes')) {
+      pythonTestCmd = 'bash scripts/validate.sh';
+    }
+  } catch (_) {}
+  if (pythonTestCmd === 'none') {
+    try {
+      // Check for Makefile with test target
+      const makefileContent = execSync(`cat "${repoPath}/Makefile" 2>/dev/null`, { encoding: 'utf8' });
+      if (/^test:/m.test(makefileContent) || /^validate:/m.test(makefileContent)) {
+        pythonTestCmd = 'make test';
+      }
+    } catch (_) {}
+  }
+  if (pythonTestCmd === 'none') {
+    try {
+      // Check for pytest.ini, setup.cfg, pyproject.toml (implies pytest)
+      const hasPytestConfig = execSync(
+        `test -f "${repoPath}/pytest.ini" -o -f "${repoPath}/setup.cfg" -o -f "${repoPath}/pyproject.toml" && echo yes`,
+        { encoding: 'utf8' }
+      ).includes('yes');
+      if (hasPytestConfig) {
+        pythonTestCmd = 'PYTHONPATH=src python3 -m pytest -q';
+      }
+    } catch (_) {}
+  }
+  if (pythonTestCmd === 'none') {
+    try {
+      // Heuristic: tests/ directory exists with pytest-style files
+      const hasTests = execSync(`test -d "${repoPath}/tests" && echo yes`, { encoding: 'utf8' }).includes('yes');
+      if (hasTests) pythonTestCmd = 'PYTHONPATH=src python3 -m pytest -q';
+    } catch (_) {}
+  }
+
   const topFiles = [...srcFiles].filter(f => f.lines > 0).sort((a, b) => b.lines - a.lines).slice(0, 20);
 
   let buildCmd = 'unknown', testCmd = 'none';
@@ -431,6 +470,10 @@ async function scanRepo(repoPath) {
       const pj = JSON.parse(execSync(`cat "${repoPath}/package.json"`, { encoding: 'utf8' }));
       buildCmd = pj.scripts?.build || 'npm run build';
       testCmd  = pj.scripts?.test  || 'npm test';
+    } else if (codebaseType === 'Python') {
+      // Use discovered Python oracle, or fall back to pytest heuristic
+      testCmd = pythonTestCmd !== 'none' ? pythonTestCmd : 'python3 -m pytest -q';
+      buildCmd = 'python3 -m py_compile';
     }
   } catch (_) {}
 
@@ -453,10 +496,27 @@ async function scanRepo(repoPath) {
 
   const featuresBacklog = readFeaturesBacklog(repoPath);
 
-  return { repoPath, codebaseType, framework, srcFiles, topFiles, buildCmd, testCmd, guardCmd, localOracle, featuresBacklog };
+  // P1-5: Discover + persist oracle to registry
+  await updateOracleRegistry(repoPath, {
+    discovered: localOracle,
+    type: 'discovered'
+  });
+  const registry = await readOracleRegistry(repoPath);
+
+  return { repoPath, codebaseType, framework, srcFiles, topFiles, buildCmd, testCmd, guardCmd, localOracle, featuresBacklog, registry };
 }
 
-function composeLocalOracle(scan) {
+function composeLocalOracle(scan, registry = null) {
+  // P1-5: Priority — user-specified > registry > discovered > heuristic
+  // 1. User-specified oracle (stored in registry as lastUserSpecified)
+  if (registry?.lastUserSpecified && registry.lastUserSpecified !== 'project-local verification command not yet discovered') {
+    return registry.lastUserSpecified;
+  }
+  // 2. Registry discovered oracle (last successful / last discovered)
+  if (registry?.lastDiscovered && registry.lastDiscovered !== 'project-local verification command not yet discovered') {
+    return registry.lastDiscovered;
+  }
+  // 3. Fall back to scan-derived commands
   const commands = [scan?.buildCmd, scan?.testCmd, scan?.guardCmd]
     .filter(Boolean)
     .filter(cmd => cmd !== 'unknown' && cmd !== 'none');
@@ -464,6 +524,66 @@ function composeLocalOracle(scan) {
   return uniqueCommands.length > 0
     ? uniqueCommands.join(' && ')
     : 'project-local verification command not yet discovered';
+}
+
+// ─────────────────────────────────────────────────────────────
+// P1-5: ORACLE REGISTRY — persistent per-repo oracle memory
+// Priority: user-specified > lastSuccessful > lastDiscovered
+// ─────────────────────────────────────────────────────────────
+/**
+ * Read oracle registry for a repo.
+ * Returns null if no registry exists yet.
+ */
+async function readOracleRegistry(repoPath) {
+  const oracleFile = path.join(repoPath, 'harness', 'oracles', 'registry.json');
+  try {
+    const raw = await readFile(oracleFile, 'utf8');
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Update oracle registry with discovered or user-specified oracle.
+ * Called after scanRepo discovers an oracle, and after user provides one.
+ *
+ * @param {string} repoPath
+ * @param {object} data  — { discovered, userSpecified?, lastSuccessful? }
+ */
+async function updateOracleRegistry(repoPath, data = {}) {
+  // P1-5: oracle registry is always at <repoPath>/harness/oracles/registry.json
+  const oracleDir  = path.join(repoPath, 'harness', 'oracles');
+  const oracleFile = path.join(oracleDir, 'registry.json');
+  try {
+    await mkdir(oracleDir, { recursive: true });
+  } catch (_) {}
+  let existing = {};
+  try {
+    const raw = await readFile(oracleFile, 'utf8');
+    existing = JSON.parse(raw);
+  } catch (_) {}
+
+  const updated = {
+    ...existing,
+    updatedAt: new Date().toISOString(),
+    lastDiscovered: data.discovered || existing.lastDiscovered || null,
+    lastUserSpecified: data.userSpecified || existing.lastUserSpecified || null,
+    lastSuccessful: data.lastSuccessful || existing.lastSuccessful || null,
+    history: [
+      { at: new Date().toISOString(), type: data.type || 'discovered', value: data.discovered || data.userSpecified || null },
+      ...(existing.history || [])
+    ].slice(0, 20) // keep last 20 entries
+  };
+
+  // Remove nulls
+  if (!updated.lastDiscovered) delete updated.lastDiscovered;
+  if (!updated.lastUserSpecified) delete updated.lastUserSpecified;
+  if (!updated.lastSuccessful) delete updated.lastSuccessful;
+
+  await writeFile(oracleFile, JSON.stringify(updated, null, 2));
+  console.log(`   🔮 Oracle registry updated: ${oracleFile}`);
+  return updated;
 }
 
 function readFeaturesBacklog(repoPath) {
@@ -567,7 +687,7 @@ function buildFeatureOracle(feature, scan) {
   const criteriaCommands = criteria.flatMap(item => [item.verify, item.negativeTest]).filter(Boolean);
   const localOracle = joinOracleCommands([feature.verify, ...criteriaCommands])
     || scan?.localOracle
-    || composeLocalOracle(scan)
+    || composeLocalOracle(scan, scan?.registry)
     || 'project-local verification command not yet discovered';
   const acceptanceSummary = formatAcceptanceCriteriaInline(criteria);
   const finalOracle = criteria.length > 0
@@ -957,12 +1077,266 @@ async function handleClarification(llmResult) {
 // ─────────────────────────────────────────────────────────────
 // STEP 5: Sprint plan (updated for v4)
 // ─────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────
+// INTENT MODE DETECTION (P0 fix — prevents backlog from hijacking task semantics)
+// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// P1-6: REPO TRUTH GATHERING — read ACTIVE/goal/features BEFORE scan drives decisions
+// ─────────────────────────────────────────────────────────────
+/**
+ * Gather project ground-truth from the repo itself.
+ * These override whatever the scanner might infer.
+ * Called at the start of generateSprintPlan() — BEFORE intent detection.
+ */
+async function gatherRepoTruth(repoPath) {
+  const [activeRaw, goalRaw] = await Promise.all([
+    readFile(path.join(repoPath, 'ACTIVE.md'), 'utf8').catch(() => null),
+    readFile(path.join(repoPath, 'harness', 'goal.md'), 'utf8').catch(() => null),
+  ]);
+
+  // Parse ACTIVE.md for current task context
+  let activeTask = null;
+  let activeFeature = null;
+  let activeStatus = null;
+  if (activeRaw) {
+    const taskMatch = activeRaw.match(/[\*\-]\s*\*\*Task\*\*:?\s*(.+)/i);
+    const featMatch = activeRaw.match(/Selected Story:\s*([F-]?\d+)/i);
+    const statMatch = activeRaw.match(/Status:\s*(\w+)/i);
+    if (taskMatch) activeTask = taskMatch[1].trim();
+    if (featMatch) activeFeature = featMatch[1].trim();
+    if (statMatch) activeStatus = statMatch[1].trim();
+  }
+
+  // Parse goal.md for current objective
+  let goalText = null;
+  if (goalRaw) {
+    // Extract first non-empty, non-heading line as goal summary
+    const lines = goalRaw.split('\n');
+    for (const line of lines) {
+      const t = line.trim();
+      if (t && !t.startsWith('#') && !t.startsWith('>')) {
+        goalText = t.slice(0, 120);
+        break;
+      }
+    }
+  }
+
+  return {
+    activeTask,
+    activeFeature,
+    activeStatus,
+    goalText,
+    hasActive: !!activeRaw,
+    hasGoal: !!goalRaw
+  };
+}
+
+/**
+ * Detect the task's intent mode BEFORE selecting a feature.
+ * This is the first line of defense against backlog-driven dispatch.
+ *
+ * P1-6: Now also considers repoTruth (ACTIVE/goal state) when resolving
+ * unclear cases — the ACTIVE state can inform "continue current" intent.
+ *
+ * Modes:
+ *   explicit_story      — User explicitly named a feature ID (F-001, F-002…)
+ *   explicit_continue   — User said "continue F-XXX" or "继续 F-XXX"
+ *   milestone_rollout   — User wants a full PRD / all features / whole project
+ *   full_rollout        — User said "完成 PRD" / "全功能" / "整个项目"
+ *   repo_wide           — Repo-wide operation (init, scaffold, audit)
+ *   unclear              — Ambiguous; fall back to backlog only if backlog is healthy
+ */
+function detectIntentMode(taskDescription, scan, repoTruth = null) {
+  const lower = taskDescription.toLowerCase();
+
+  // Pattern: explicit feature ID mentions
+  const explicitFeatureMatch = taskDescription.match(/\bF-?(\d{2,3})\b/i) || taskDescription.match(/feature[_-]?(\d{2,3})\b/i);
+  const explicitFeatureId = explicitFeatureMatch
+    ? `F-${String(explicitFeatureMatch[1]).padStart(3, '0')}`
+    : null;
+
+  // Directive: "continue / 继续 / 下一步 / 做完" + feature
+  // NOTE: \b word boundary does NOT work with CJK characters — use bare substring for Chinese
+  const continuePattern = /(\bcontinue[d]?\b|继续|下一步|做完|不要停在|不要做|别做|不要只做)/i;
+  const hasDirective = continuePattern.test(taskDescription);
+
+  // Milestone / full project keywords
+  const fullRolloutKeywords = [
+    '完成 prd', '全功能', '整个项目', '所有功能', '全部功能',
+    'complete prd', 'full project', 'all features', 'whole project',
+    '项目立项', '初始化项目', '项目启动', '新项目',
+    '全面', '整体', '端到端', 'end to end',
+  ];
+  const hasFullRolloutIntent = fullRolloutKeywords.some(kw => lower.includes(kw));
+
+  // Repo-wide operations (scaffold, init, audit — NOT feature dispatch)
+  // NOTE: "init whole project" should be full_rollout, not repo_wide — more specific
+  const repoWideKeywords = [
+    'scaffold new', 'init new project', 'audit', '巡检', '检查',
+    '项目巡检', '代码审计', '健康检查',
+  ];
+  const hasRepoWideIntent = repoWideKeywords.some(kw => lower.includes(kw));
+
+  // Size signal: if task is complex AND user says "multiple / 多个 / 全面"
+  const isComplexTask = (scan && scan.topFiles && scan.topFiles.length > 5) ||
+    ['多个', '全面', '完整', '整个', '所有', 'multiple', 'full', 'complete'].some(kw => lower.includes(kw));
+
+  // ── Decision tree (order matters!) ───────────────────────────
+  // Priority 1: explicit feature + directive → explicit_continue (MUST be first)
+  if (explicitFeatureId && hasDirective) {
+    return { mode: 'explicit_continue', explicitFeatureId, directive: 'continue' };
+  }
+  // Priority 2: explicit feature without directive
+  if (explicitFeatureId) {
+    return { mode: 'explicit_story', explicitFeatureId, directive: null };
+  }
+  // Priority 3: directive without explicit feature
+  if (hasDirective) {
+    return { mode: 'unclear_but_has_directive', explicitFeatureId: null, directive: 'directive_without_feature_id' };
+  }
+  // Priority 4: full rollout (check BEFORE repo_wide so "init whole project" → full_rollout)
+  if (hasFullRolloutIntent || (isComplexTask && hasDirective === false)) {
+    return { mode: 'full_rollout', explicitFeatureId: null, directive: null };
+  }
+  // Priority 5: repo-wide (audit, scaffold — NOT project implementation)
+  if (hasRepoWideIntent) {
+    return { mode: 'repo_wide', explicitFeatureId: null, directive: null };
+  }
+  // Fallback: unclear
+  // P1-6: If repo has an active in-progress feature, unresolved tasks default to continuing it
+  if (repoTruth?.activeFeature &&
+      repoTruth?.activeStatus &&
+      !['done', 'goal_closed'].includes(repoTruth.activeStatus)) {
+    return {
+      mode: 'explicit_continue',
+      explicitFeatureId: repoTruth.activeFeature,
+      directive: 'from_active',
+      source: 'repo_truth'
+    };
+  }
+  return { mode: 'unclear', explicitFeatureId: null, directive: null };
+}
+
+/**
+ * Scope mismatch guard — the second line of defense.
+ * Runs AFTER selectNextFeature() but BEFORE the feature is used.
+ *
+ * Returns an error object if there's a dangerous mismatch,
+ * or null if the selection is safe to use.
+ */
+function detectScopeMismatch(intentMode, autoSelectedFeature, scan) {
+  const { mode, explicitFeatureId } = intentMode;
+
+  // CASE 1: User explicitly named a feature, but auto-selected a DIFFERENT one
+  if (explicitFeatureId && autoSelectedFeature) {
+    const autoId = autoSelectedFeature.id || '';
+    // Normalize both forms: F-1 vs F-001
+    const norm = id => id.replace(/^F-0*(\d+)$/i, (_, n) => `F-${n}`).toUpperCase();
+    if (norm(explicitFeatureId) !== norm(autoId)) {
+      return {
+        severity: 'hard_error',
+        message: `Scope mismatch: user explicitly asked for ${explicitFeatureId} but backlog auto-selected ${autoId}. ` +
+          `Harness will honor the user's explicit intent and target ${explicitFeatureId}.`,
+        overrideFeatureId: explicitFeatureId
+      };
+    }
+  }
+
+  // CASE 2: User said "don't stay on F-001" or "don't do F-001 only"
+  // but auto-selected the blocked feature
+  const taskLower = ''; // passed separately if needed
+  const blockedPatterns = [/不要停在f-?\d+/i, /不要做f-?\d+/i, /别做f-?\d+/i, /不要只做f-?\d+/i];
+  // We detect this from the task text — handled by caller passing `taskDescription`
+
+  // CASE 3: full_rollout / milestone_rollout but auto-selected single feature
+  // This is a soft warning (warn but allow override at continue gate level)
+  if ((mode === 'full_rollout' || mode === 'milestone_rollout') && autoSelectedFeature) {
+    return {
+      severity: 'soft_warning',
+      message: `Scope mismatch: task appears to be full-rollout/milestone-level but backlog auto-selected ` +
+        `single feature ${autoSelectedFeature.id}. Consider expanding scope.`,
+      overrideFeatureId: null // don't override — just warn
+    };
+  }
+
+  // CASE 4: repo_wide mode — backlog selection is IRRELEVANT
+  if (mode === 'repo_wide' && autoSelectedFeature) {
+    return {
+      severity: 'hard_error',
+      message: `Scope mismatch: task is repo-wide (init/scaffold/audit) but backlog auto-selected ` +
+        `${autoSelectedFeature.id}. Repo-wide tasks bypass feature backlog entirely.`,
+      overrideFeatureId: null
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Override the auto-selected feature using a scope mismatch result.
+ * Returns the correct feature from the backlog, or null to disable feature-mode.
+ */
+function resolveFeatureFromMismatch(mismatch, scan) {
+  if (!mismatch || mismatch.severity !== 'hard_error') return null;
+  if (!mismatch.overrideFeatureId) return null; // mismatch but no override available
+
+  const backlog = scan?.featuresBacklog || [];
+  const targetId = mismatch.overrideFeatureId;
+  const normalized = targetId.replace(/^F-0*(\d+)$/i, (_, n) => `F-${parseInt(n)}`);
+
+  const resolved = backlog.find(f => {
+    const fid = (f.id || '').replace(/^F-0*(\d+)$/i, (_, n) => `F-${parseInt(n)}`);
+    return fid === normalized;
+  });
+
+  return resolved || null;
+}
+
+// ─────────────────────────────────────────────────────────────
 async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig = null, codemapPath = null) {
   const sprints = [];
   const baseDir = path.join(HARNESS_DIR, 'contracts');
   await mkdir(baseDir, { recursive: true });
 
-  const nextFeature = selectNextFeature(scan?.featuresBacklog || []);
+  // ── P1-6: Gather repo truth BEFORE intent detection — this is the decision priority ──
+  const repoTruth = await gatherRepoTruth(project.repoPath);
+  if (repoTruth.hasActive) {
+    console.log(`   📌 Repo Truth: active feature=${repoTruth.activeFeature || 'none'} status=${repoTruth.activeStatus || 'unknown'}`);
+  }
+
+  // ── P0: Intent resolution — uses repoTruth to resolve unclear tasks ──
+  const intentMode = detectIntentMode(taskDescription, scan, repoTruth);
+  console.log(`\n🎯 Intent Mode: ${intentMode.mode}${intentMode.explicitFeatureId ? ` (explicit target: ${intentMode.explicitFeatureId})` : ''}`);
+
+  // ── Backlog selection (only used in appropriate intent modes) ──
+  const autoSelectedFeature = selectNextFeature(scan?.featuresBacklog || []);
+
+  // ── P0: Scope mismatch guard — validate auto-selection against intent ──
+  const scopeMismatch = detectScopeMismatch(intentMode, autoSelectedFeature, scan);
+  if (scopeMismatch) {
+    if (scopeMismatch.severity === 'hard_error') {
+      console.warn(`\n🛑 SCOPE MISMATCH (hard error): ${scopeMismatch.message}`);
+      // Override: use the correct feature from backlog
+      const correctFeature = resolveFeatureFromMismatch(scopeMismatch, scan);
+      if (correctFeature) {
+        console.warn(`   → Overriding to user-specified ${correctFeature.id} (${correctFeature.title})`);
+        // Replace autoSelectedFeature with correct one
+        // We do this by reassigning — keep the const but the guard is logged
+      } else if (intentMode.mode === 'repo_wide' || intentMode.mode === 'full_rollout') {
+        console.warn(`   → Disabling feature mode for this round (repo-wide / full-rollout task)`);
+      }
+    } else {
+      console.warn(`\n⚠️  SCOPE MISMATCH (soft warning): ${scopeMismatch.message}`);
+    }
+  }
+
+  // Use intent-aware feature selection
+  const nextFeature = resolveFeatureFromMismatch(scopeMismatch, scan) ||
+    ((scopeMismatch?.severity === 'hard_error' && !scopeMismatch.overrideFeatureId)
+      ? null
+      : autoSelectedFeature);
+
   const featureGate = evaluateStoryGate(nextFeature);
   const featureOracle = nextFeature ? buildFeatureOracle(nextFeature, scan) : null;
   const baseTaskProfile = llmResult?.taskProfile || { taskType: 'single', riskLevel: 'medium', scopeGuess: 'multi-file' };
@@ -1316,7 +1690,7 @@ function deriveContinueGate(taskDescription, project, llmResult, scan, complexit
     || featureOracle?.localOracle
     || previousLocalOracle
     || scan?.localOracle
-    || composeLocalOracle(scan)
+    || composeLocalOracle(scan, scan?.registry)
     || 'project-local verification command not yet discovered';
   const finalOracle = FINAL_ORACLE_INPUT
     || featureOracle?.finalOracle

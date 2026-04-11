@@ -225,7 +225,13 @@ async function gatherRelevantMaterials(repoPath, task, limits) {
   const previewCandidates = await findFiles(repoPath, [
     '*.ts','*.tsx','*.js','*.jsx','*.py','*.go','*.java'
   ], {
-    exclude: ['*/node_modules/*','*/.git/*','*/dist/*','*/build/*'],
+    exclude: [
+      '*/node_modules/*','*/.git/*','*/dist/*','*/build/*',
+      '*/.venv/*','*/site-packages/*',           // Python venv / pip packages
+      '*/harness/artifacts/*','*/harness/context/*',  // harness generated (self-avoid)
+      '*/harness/reports/*','*/harness/qa/*',
+      '*/.next/*','*/coverage/*','*/dist_prod/*'  // other build/cache artifacts
+    ],
     timeoutMs: 12000
   });
 
@@ -288,7 +294,7 @@ async function extractRelevantSnippets(repoPath, keywords, opts) {
   if (escaped.length === 0) return [];
   const pattern = escaped.join('|');
 
-  // Search docs (no full inline): exclude obvious noise.
+  // Search docs (no full inline): exclude obvious noise + self-contamination.
   const rgArgs = [
     '--no-heading',
     '--line-number',
@@ -298,6 +304,14 @@ async function extractRelevantSnippets(repoPath, keywords, opts) {
     '--glob', '!*dist/**',
     '--glob', '!*build/**',
     '--glob', '!*\\.git/**',
+    '--glob', '!*harness/artifacts/**',
+    '--glob', '!*harness/context/**',
+    '--glob', '!*harness/reports/**',
+    '--glob', '!*harness/qa/**',
+    '--glob', '!*\\.venv/**',
+    '--glob', '!*site-packages/**',
+    '--glob', '!*\\.next/**',
+    '--glob', '!*coverage/**',
     '--glob', '*.md',
     '--glob', '*.txt',
     '--glob', '*.mdx',

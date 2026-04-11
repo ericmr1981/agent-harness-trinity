@@ -274,6 +274,7 @@ function getSrcFiles() {
   const output = safeRun(
     `find . -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.py" \\) ` +
     `! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" ` +
+    `! -path "*/.venv/*" ! -path "*/site-packages/*" ! -path "*/.venv/*/" ! -path "*/site-packages/*/" ` +
     `2>/dev/null | head -2000`
   );
   return output.split('\n').filter(Boolean).map(f => {
