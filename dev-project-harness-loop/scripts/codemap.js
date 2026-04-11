@@ -151,14 +151,14 @@ function detectRepoProfile() {
  * where label is like "TypeScript" / "JavaScript" / "TypeScript + JavaScript" / "Python" / "Go"
  */
 function detectSourceLanguages() {
-  const extCounts = { js: 0, ts: 0, tsx: 0, py: 0, go: 0 };
+  const extCounts = { js: 0, ts: 0, tsx: 0, py: 0, go: 0, sh: 0 };
   const files = getSrcFiles();
   for (const f of files) {
     const ext = path.extname(f).slice(1); // '.tsx' → 'tsx'
     if (extCounts[ext] !== undefined) extCounts[ext]++;
   }
-  const { js, ts, tsx, py, go } = extCounts;
-  const total = js + ts + tsx + py + go;
+  const { js, ts, tsx, py, go, sh } = extCounts;
+  const total = js + ts + tsx + py + go + sh;
   const present = Object.entries(extCounts).filter(([, n]) => n > 0).map(([k]) => k);
 
   let primary = 'unknown';
@@ -172,12 +172,14 @@ function detectSourceLanguages() {
     else if (present[0] === 'js') { primary = 'JavaScript'; label = 'JavaScript'; }
     else if (present[0] === 'py') { primary = 'Python'; label = 'Python'; }
     else if (present[0] === 'go') { primary = 'Go'; label = 'Go'; }
+    else if (present[0] === 'sh') { primary = 'Shell'; label = 'Shell'; }
   } else {
     const labels = [];
     if (ts > 0 || tsx > 0) labels.push('TypeScript');
     if (js > 0) labels.push('JavaScript');
     if (py > 0) labels.push('Python');
     if (go > 0) labels.push('Go');
+    if (sh > 0) labels.push('Shell');
     label = labels.join(' + ');
     // Primary = the extension with the most files
     const sorted = Object.entries(extCounts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
@@ -186,6 +188,7 @@ function detectSourceLanguages() {
     else if (primary === 'js') primary = 'JavaScript';
     else if (primary === 'py') primary = 'Python';
     else if (primary === 'go') primary = 'Go';
+    else if (primary === 'sh') primary = 'Shell';
   }
 
   return { languages: extCounts, total, primary, label, present };
@@ -196,10 +199,10 @@ function detectSourceLanguages() {
  * (Language is now determined by detectSourceLanguages, not here.)
  */
 function detectFramework() {
-  const pkg = safeRun('cat package.json');
-  if (!pkg) return { framework: 'unknown' };
+  const pkgPath = path.join(repoPath, 'package.json');
+  if (!fs.existsSync(pkgPath)) return { framework: 'unknown' };
   try {
-    const pj = JSON.parse(pkg);
+    const pj = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     const deps = { ...(pj.dependencies || {}), ...(pj.devDependencies || {}) };
     const pkgJsonDeps = Object.keys(deps);
     const frameworks = [];
@@ -272,7 +275,7 @@ function getDirTree(depth = 3) {
 // ─────────────────────────────────────────────────────────────
 function getSrcFiles() {
   const output = safeRun(
-    `find . -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.py" \\) ` +
+    `find . -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.go" -o -name "*.py" -o -name "*.sh" \\) ` +
     `! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" ` +
     `! -path "*/.venv/*" ! -path "*/site-packages/*" ! -path "*/.venv/*/" ! -path "*/site-packages/*/" ` +
     `2>/dev/null | head -2000`

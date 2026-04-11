@@ -1,5 +1,23 @@
 # Progress Log
 
+## 2026-04-11下午 — 最小修补：codemap 噪音、shell 统计、self-contained regressions
+**refs:** `f0c1806`
+**status:** local verified
+
+**本轮完成：**
+- `codemap.js` 不再通过 `cat package.json` 探测框架；无 `package.json` 的仓库不再向 stdout 打 `No such file or directory`
+- `codemap.js` 语言统计纳入 `.sh`，避免 Trinity 这类 shell-heavy 仓库被误报成纯 JS/Python
+- `tests/regressions.sh` 改为默认使用当前 repo 作为 `OPENCLAW_WORKSPACE`，不再硬依赖 `mike-product-calc`
+- `tests/smoke.sh` 现在串联回归测试，避免只有语法/文件存在检查
+- `features.json` 的 F-003 文案改为“最小 harness 骨架（含 TODO 占位）”，把能力边界说实话
+
+**验证：**
+- `node --check dev-project-harness-loop/scripts/codemap.js` ✅
+- `node dev-project-harness-loop/scripts/codemap.js . --force --output /tmp/trinity-codemap-audit.md` ✅（无 `cat: package.json` 噪音）
+- `bash tests/regressions.sh` ✅
+- `bash tests/smoke.sh` ✅
+- `bash scripts/run_drift_check.sh` ✅
+
 ## 2026-04-10上午 — sync manifest 补齐 codemap.js，确保全局同步不会漏掉
 **status:** local fix ready
 

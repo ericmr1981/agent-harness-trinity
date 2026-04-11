@@ -15,8 +15,8 @@ PASS(){ printf "${GREEN}[PASS]${RESET} %s\n" "$1"; }
 FAIL(){ printf "${RED}[FAIL]${RESET} %s\n" "$1"; exit 1; }
 INFO(){ printf "${YELLOW}[INFO]${RESET} %s\n" "$1"; }
 
-# Config: use mike-product-calc as target repo for oracle + backlog tests
-export OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-/Users/ericmr/Documents/GitHub/mike-product-calc}"
+# Config: default to this repo so regressions stay self-contained; callers may override OPENCLAW_WORKSPACE.
+export OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-$REPO_DIR}"
 HARNESS="env OPENCLAW_WORKSPACE=$OPENCLAW_WORKSPACE /usr/local/bin/node $HARNESS_JS"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -100,7 +100,8 @@ fi
 # ── Test 5: oracle registry discovered ───────────────────────────────────────
 INFO "Test 5: oracle registry discovered and persisted"
 # Restore workspace
-export OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-/Users/ericmr/Documents/GitHub/mike-product-calc}"
+export OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-$REPO_DIR}"
+HARNESS="env OPENCLAW_WORKSPACE=$OPENCLAW_WORKSPACE /usr/local/bin/node $HARNESS_JS"
 $HARNESS --mode keyword --complexity 3 "看看这个项目" >/dev/null 2>&1 || true
 oracle=$(oracle_discovered "$OPENCLAW_WORKSPACE")
 if [[ "$oracle" != "N/A" && "$oracle" != *"not yet discovered"* ]]; then

@@ -27,4 +27,11 @@ echo "--- bash init.sh ---"
 bash init.sh
 echo "[OK] init.sh passes"
 
+# 4. regression suite
+if [[ -f "tests/regressions.sh" ]]; then
+  echo "--- bash tests/regressions.sh ---"
+  bash tests/regressions.sh
+  echo "[OK] regressions pass"
+fi
+
 echo "=== smoke test PASSED ==="

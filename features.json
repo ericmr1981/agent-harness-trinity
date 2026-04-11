@@ -13,8 +13,9 @@
   },
   {
     "id": "F-003",
-    "title": "scaffold_harness.sh 可生成合规 harness",
+    "title": "scaffold_harness.sh 可生成最小 harness 骨架（含 TODO 占位）",
     "passes": true,
+    "notes": "This verifies structural scaffold generation only. Generated files still contain TODO placeholders and require project-specific completion before a repo is truly ready.",
     "verify": "ROOT=\"$(pwd)\" && tmpdir=$(mktemp -d /tmp/trinity-scaffold-XXXXXX) && (cd \"$tmpdir\" && bash \"$ROOT/project-harness-guards/scripts/scaffold_harness.sh\" --install-guards && bash init.sh && bash scripts/run_drift_check.sh)"
   },
   {
