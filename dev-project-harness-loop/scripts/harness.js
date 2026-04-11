@@ -318,11 +318,22 @@ function parseTASKS(content) {
   return entries;
 }
 
+function sanitizeProjectQuery(text = '') {
+  // Keep unicode letters/numbers; drop punctuation/noise.
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[^\p{L}\p{N}\-_]+/gu, '')
+    .trim();
+}
+
 async function findRepoInGithubRoot(name) {
   try {
     const dirs = await readdir(GITHUB_ROOT);
     const normalized = name.toLowerCase().replace(/[_\s]+/g, '-');
+    if (!normalized || normalized.length < 2) return null;
     for (const dir of dirs) {
+      if (dir.startsWith('.')) continue; // ignore hidden dirs like .claude
       if (dir.toLowerCase().replace(/[_\s]+/g, '-').includes(normalized)) {
         const fullPath = path.join(GITHUB_ROOT, dir);
         const s = await stat(fullPath);
@@ -335,10 +346,15 @@ async function findRepoInGithubRoot(name) {
 
 async function inferProjectFromGithub(lower) {
   try {
+    const query = sanitizeProjectQuery(lower);
+    // Empty / too-short / generic queries must NOT match arbitrary repos.
+    if (!query || query.length < 2) return null;
+
     const dirs = await readdir(GITHUB_ROOT);
     for (const dir of dirs) {
+      if (dir.startsWith('.')) continue; // ignore hidden dirs like .claude
       const normalized = dir.toLowerCase().replace(/[_\s]+/g, '-');
-      if (normalized.includes(lower.replace(/[^\w]/g, ''))) {
+      if (normalized.includes(query) || query.includes(normalized)) {
         const fullPath = path.join(GITHUB_ROOT, dir);
         const s = await stat(fullPath);
         if (s.isDirectory()) return { displayName: dir, repoPath: fullPath, source: 'github-scan' };
