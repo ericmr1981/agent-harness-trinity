@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-04-11晚 — Round 2：四维评分 + ContextAssembler profile 门控
+**refs:** `ffd51a3...HEAD`
+**status:** local verified
+
+**本轮完成：**
+- `harness.js`：四维评分（scope/coordination/context/risk 各 1-10）替代旧式单一 complexity；context profile 按需计算而非按 complexity 推导；attachment tier 跟随 context profile 而非 complexity；`planningSignals` → `buildMatrixFlags`（更精确的 flag 推导）；`parseTASKS` 支持 vNext 表格格式；主流程调整为 preflight → scan → LLM → clarification → signals → contextAssembler
+- `context-assembler.js`：`--profile minimal|standard|full` + `--target subagent|verifier`；`deriveSectionPlan()` 按 profile 决定 section 归属（required/conditional/on-demand）；`buildContextMeta()` 生成 `.json` 元数据文件；context package header 标注 profile/target/sections
+
+**验证：**
+- `node --check harness.js + context-assembler.js` ✅
+- `bash tests/smoke.sh` ✅
+- `bash tests/regressions.sh` ✅
+
+---
+
 ## 2026-04-11傍晚 — Round 1：索引与项目宪章收口
 **refs:** `af211f3`
 **status:** local verified

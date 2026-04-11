@@ -123,17 +123,7 @@ async function main() {
   const project = await discoverProject(taskDescriptionClean);
   console.log(`📁 Project: ${project.displayName} | Repo: ${project.repoPath}`);
 
-  // Step 1.5: CONTEXT ASSEMBLER (skipped in minimal mode)
-  let contextPackagePath = null;
-  if (MODE_ARG !== 'minimal') {
-    try {
-      contextPackagePath = await runContextAssembler(project.repoPath, taskDescriptionClean);
-    } catch (e) {
-      console.log(`   ⚠️  ContextAssembler failed (${e.message}), continuing without context package`);
-    }
-  }
-
-  // Step 1.75: HARNESS PRE-FLIGHT CHECK (skipped in minimal mode, or with --no-preflight)
+  // Step 1.5: HARNESS PRE-FLIGHT CHECK (skipped in minimal mode, or with --no-preflight)
   if (MODE_ARG !== 'minimal' && !rawArgs.includes('--no-preflight')) {
     await preflightHarnessCheck(project.repoPath);
   }
@@ -167,11 +157,7 @@ async function main() {
     }
   }
 
-  // Step 3: Complexity scoring (override or compute)
-  const complexity = COMPLEXITY > 0 ? COMPLEXITY : (scan ? computeComplexity(taskDescriptionClean, scan) : 3);
-  console.log(`\n📊 Complexity Score: ${complexity}/10 → Profile: ${scoreToProfile(complexity)}`);
-
-  // Step 4: LLM analysis (skip in minimal/keyword modes)
+  // Step 3: LLM analysis (skip in minimal/keyword modes)
   let llmResult = null;
   if (MODE_ARG === 'llm' || MODE_ARG === 'llm-full') {
     llmResult = await analyzeTaskWithLLM(taskDescriptionClean, project, scan);
@@ -183,7 +169,7 @@ async function main() {
     tokenTrack.estimatedTokens += 150;
   }
 
-  // Step 5: Clarification (skip in minimal mode)
+  // Step 4: Clarification (skip in minimal mode)
   if (MODE_ARG !== 'minimal' && llmResult.needsClarification) {
     const answer = await handleClarification(llmResult);
     if (answer === null) {
@@ -196,10 +182,29 @@ async function main() {
     }
   }
 
+  // Step 5: Planning signals + ContextAssembler (demand-driven, not complexity-driven)
+  const planningSignals = computePlanningSignals(taskDescriptionClean, scan, llmResult);
+  const complexity = COMPLEXITY > 0 ? COMPLEXITY : deriveLegacyComplexity(planningSignals);
+  const contextProfile = deriveContextProfile(planningSignals, MODE_ARG);
+  console.log(`\n📊 Planning Signals: scope=${planningSignals.scopeScore}/10 | coordination=${planningSignals.coordinationScore}/10 | context=${planningSignals.contextDependencyScore}/10 | risk=${planningSignals.riskScore}/10`);
+  console.log(`📦 Context Profile: ${contextProfile} | Legacy Complexity: ${complexity}/10 → ${scoreToProfile(complexity)}`);
+
+  let contextPackagePath = null;
+  if (MODE_ARG !== 'minimal') {
+    try {
+      contextPackagePath = await runContextAssembler(project.repoPath, taskDescriptionClean, {
+        profile: contextProfile,
+        target: 'subagent'
+      });
+    } catch (e) {
+      console.log(`   ⚠️  ContextAssembler failed (${e.message}), continuing without context package`);
+    }
+  }
+
   const previousMasterConfig = await readPreviousMasterConfig();
 
   // Step 6: Sprint plan
-  const plan = await generateSprintPlan(taskDescriptionClean, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig, codemapPath);
+  const plan = await generateSprintPlan(taskDescriptionClean, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig, codemapPath, planningSignals, contextProfile);
 
   // Step 7: Dispatch (skip when only consuming result/backfill)
   if (!DRY_RUN && !CONSUME_RESULT) {
@@ -215,6 +220,8 @@ async function main() {
     : new Date().toISOString();
   const masterConfig = {
     project, taskDescription: taskDescriptionClean, llmResult, plan, complexity,
+    planningSignals,
+    contextProfile,
     tokenTrack,
     continueGate: plan.continueGate,
     executionResult: plan.executionResult,
@@ -280,9 +287,24 @@ async function discoverProject(taskDescription) {
 // ─────────────────────────────────────────────────────────────
 function parseTASKS(content) {
   const entries = {};
+
+  // vNext table format
+  const allSection = content.includes('## All Projects') ? content.split('## All Projects')[1] : '';
+  const tableRows = allSection.split('\n').filter(line => /^\|\s*\d+\s*\|/.test(line.trim()));
+  for (const row of tableRows) {
+    const cols = row.split('|').map(c => c.trim()).filter(Boolean);
+    if (cols.length >= 4) {
+      const name = cols[1];
+      const repoPath = cols[2].replace(/`/g, '');
+      const status = cols[3];
+      entries[name] = { repoPath, status };
+    }
+  }
+  if (Object.keys(entries).length > 0) return entries;
+
+  // Legacy fallback format
   const lines = content.split('\n');
   let i = 0;
-
   while (i < lines.length) {
     const line = lines[i];
     if (line.includes('**Project number') && (line.includes('\uff1a') || line.includes(':'))) {
@@ -781,11 +803,13 @@ function applySplitRequiredGate(continueGate, feature, reasons = []) {
  * Called when --complexity is not provided (auto mode).
  * Can be overridden: --complexity 7
  */
-function computeComplexity(taskDescription, scan) {
+function computePlanningSignals(taskDescription, scan, llmResult = null) {
   const lower = taskDescription.toLowerCase();
-  let score = 0;
+  let scopeScore = 1;
+  let coordinationScore = 1;
+  let contextDependencyScore = 1;
+  let riskScore = 1;
 
-  // ── Indicator 1: File count estimate ──────────────────────
   const multiFileSignals = [
     'multiple', 'several', '多个', '多个文件', 'multi-file',
     'across', '涉及多个', '分散在', '不同模块'
@@ -794,34 +818,52 @@ function computeComplexity(taskDescription, scan) {
     '单文件', 'single file', '一个文件', '改一个字', '改错别字',
     '改端口', '改配置', '改注释'
   ];
-  if (multiFileSignals.some(s => lower.includes(s))) score += 2;
-  else if (singleFileSignals.some(s => lower.includes(s))) score += 0;
-  else if (scan && scan.topFiles.length > 10) score += 1;
+  if (multiFileSignals.some(s => lower.includes(s))) scopeScore += 2;
+  else if (singleFileSignals.some(s => lower.includes(s))) scopeScore += 0;
+  else if (scan && scan.topFiles.length > 10) scopeScore += 1;
 
-  // ── Indicator 2: Change magnitude ─────────────────────────
   const bigChangeSignals = ['重构', 'refactor', '重写', 'rewrite', '全面改造', '架构', '系统设计'];
   const medChangeSignals = ['改写', '实现', '新增功能', 'implement', '功能', 'feature'];
   const smallChangeSignals = ['改', 'fix', 'bug', '修复', '改错', 'update', '调整', '优化'];
-  if (bigChangeSignals.some(s => lower.includes(s))) score += 3;
-  else if (medChangeSignals.some(s => lower.includes(s))) score += 2;
-  else if (smallChangeSignals.some(s => lower.includes(s))) score += 1;
+  if (bigChangeSignals.some(s => lower.includes(s))) scopeScore += 3;
+  else if (medChangeSignals.some(s => lower.includes(s))) scopeScore += 2;
+  else if (smallChangeSignals.some(s => lower.includes(s))) scopeScore += 1;
 
-  // ── Indicator 3: Domain breadth ──────────────────────────
   const domains = ['frontend', 'backend', 'database', 'devops', 'security', 'design'];
   const domainCount = domains.filter(d => lower.includes(d)).length;
-  score += Math.min(2, domainCount);
+  coordinationScore += Math.min(3, domainCount);
 
-  // ── Indicator 4: Risk signals ─────────────────────────────
   const highRiskSignals = ['认证', 'auth', '支付', 'payment', 'deploy', 'production', '数据库迁移', '破坏性', 'destructive'];
   const mediumRiskSignals = ['api', '接口', '路由', '状态', 'data'];
-  if (highRiskSignals.some(s => lower.includes(s))) score += 2;
-  else if (mediumRiskSignals.some(s => lower.includes(s))) score += 1;
+  if (highRiskSignals.some(s => lower.includes(s))) riskScore += 4;
+  else if (mediumRiskSignals.some(s => lower.includes(s))) riskScore += 2;
 
-  // ── Indicator 5: Multi-agent signals ──────────────────────
   const multiAgentSignals = ['双方', '多角色', 'multi-agent', '前后端', 'frontend+backend', 'ui+api'];
-  if (multiAgentSignals.some(s => lower.includes(s))) score += 2;
+  if (multiAgentSignals.some(s => lower.includes(s))) coordinationScore += 4;
 
-  return Math.min(10, Math.max(0, score));
+  const contextHeavySignals = ['分析', '梳理', '全局', '全链路', '上下文', 'history', 'context', 'repo-wide', '代码库', 'audit', 'review'];
+  const contextLightSignals = ['单文件', '错别字', '小改', 'rename only', 'one-liner'];
+  if (contextHeavySignals.some(s => lower.includes(s))) contextDependencyScore += 4;
+  else if (contextLightSignals.some(s => lower.includes(s))) contextDependencyScore += 0;
+  else contextDependencyScore += Math.min(3, Math.ceil((scan?.topFiles?.length || 0) / 8));
+
+  if (llmResult?.taskProfile?.scopeGuess === 'cross-layer' || llmResult?.taskProfile?.scopeGuess === 'full-rewrite') scopeScore += 2;
+  if (llmResult?.isMultiAgent) coordinationScore += 2;
+  if (llmResult?.taskProfile?.riskLevel === 'high') riskScore += 2;
+
+  return {
+    scopeScore: Math.min(10, Math.max(1, scopeScore)),
+    coordinationScore: Math.min(10, Math.max(1, coordinationScore)),
+    contextDependencyScore: Math.min(10, Math.max(1, contextDependencyScore)),
+    riskScore: Math.min(10, Math.max(1, riskScore)),
+  };
+}
+
+function deriveLegacyComplexity(signals) {
+  return Math.min(10, Math.max(
+    signals.scopeScore,
+    Math.round((signals.scopeScore + signals.coordinationScore + signals.riskScore) / 3)
+  ));
 }
 
 /** Map complexity score → harness profile */
@@ -832,11 +874,32 @@ function scoreToProfile(complexity) {
   return 'PGE-sprint';
 }
 
-/** Map complexity → attachment strategy */
-function scoreToAttachmentTier(complexity) {
-  if (complexity <= 2) return 'minimal';
-  if (complexity <= 4) return 'standard';
+function deriveContextProfile(signals, mode = MODE_ARG) {
+  if (mode === 'minimal') return 'minimal';
+  if (signals.contextDependencyScore >= 7) return 'full';
+  if (signals.contextDependencyScore >= 4) return 'standard';
+  return 'minimal';
+}
+
+/** Map context need → attachment strategy */
+function scoreToAttachmentTier(contextProfile) {
+  if (contextProfile === 'minimal') return 'minimal';
+  if (contextProfile === 'standard') return 'standard';
   return 'full';
+}
+
+function deriveRecommendedAgentCount(signals, llmResult = null, nextFeature = null) {
+  if (nextFeature) return 1;
+  if (llmResult?.isMultiAgent || signals.coordinationScore >= 7) return Math.max(2, Math.min(4, Math.ceil(signals.coordinationScore / 3)));
+  if (signals.scopeScore >= 8 && signals.riskScore >= 6) return 2;
+  return 1;
+}
+
+function deriveRecommendedSprintCount(signals, nextFeature = null) {
+  if (nextFeature) return 1;
+  if (signals.scopeScore >= 8) return 3;
+  if (signals.scopeScore >= 5) return 2;
+  return 1;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1465,7 +1528,7 @@ function buildMilestoneQueue(intentMode, scan) {
 }
 
 // ─────────────────────────────────────────────────────────────
-async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig = null, codemapPath = null) {
+async function generateSprintPlan(taskDescription, project, llmResult, scan, complexity, tokenTrack, contextPackagePath, previousMasterConfig = null, codemapPath = null, planningSignals = null, contextProfile = 'standard') {
   const sprints = [];
   const baseDir = path.join(HARNESS_DIR, 'contracts');
   await mkdir(baseDir, { recursive: true });
@@ -1519,7 +1582,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       }
     : baseTaskProfile;
   const { taskType, riskLevel, scopeGuess } = effectiveTaskProfile;
-  const matrixFlags = buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, nextFeature, featureGate, featureOracle);
+  const matrixFlags = buildMatrixFlags(complexity, planningSignals, riskLevel, scopeGuess, llmResult, nextFeature, featureGate, featureOracle, contextProfile);
 
   // Agent selection: decision tree (llm mode) or keyword fallback
   const agent = MODE_ARG === 'minimal'
@@ -1528,10 +1591,13 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
 
   console.log(`\n🤖 Selected Agent: ${agent.id} (confidence: ${agent.confidence}%)`);
   if (nextFeature) console.log(`🎯 Selected Story: ${nextFeature.id} (${nextFeature.title})`);
-  tokenTrack.subagentEstimate = nextFeature ? 1 : (complexity >= 7 ? 4 : complexity >= 4 ? 2 : 1);
+  const effectiveSignals = planningSignals || computePlanningSignals(taskDescription, scan, llmResult);
+  const recommendedAgentCount = deriveRecommendedAgentCount(effectiveSignals, llmResult, nextFeature);
+  const recommendedSprintCount = deriveRecommendedSprintCount(effectiveSignals, nextFeature);
+  tokenTrack.subagentEstimate = recommendedAgentCount;
 
-  // Determine attachment tier
-  const tier = scoreToAttachmentTier(complexity);
+  // Determine attachment tier from context need, not complexity
+  const tier = scoreToAttachmentTier(contextProfile);
   const executionResult = deriveExecutionResult(previousMasterConfig);
   let continueGate = deriveContinueGate(
     nextFeature ? `${taskDescription} :: ${nextFeature.id}` : taskDescription,
@@ -1546,7 +1612,8 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
   if (nextFeature && featureGate.splitRequired) {
     continueGate = applySplitRequiredGate(continueGate, nextFeature, featureGate.reasons);
   }
-  console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF only' : 'full 6-7 files'})`);
+  console.log(`📦 Attachment Tier: ${tier} (${tier === 'minimal' ? '无附件' : tier === 'standard' ? 'TEMPLATE_BRIEF + contract + focused context' : 'full context pack'})`);
+  console.log(`🧭 Recommended Shape: sprints=${recommendedSprintCount} | agents=${recommendedAgentCount} | context=${contextProfile}`);
 
   // ── P2-8: Compute scope selection reason + queues (available for all return paths) ──
   const scopeSelectionReason = buildScopeSelectionReason(intentMode, scopeMismatch, autoSelectedFeature, nextFeature, scan, repoTruth);
@@ -1554,8 +1621,8 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
   const milestoneQueue = buildMilestoneQueue(intentMode, scan);
 
   if (nextFeature && featureGate.splitRequired) {
-    const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue);
-    return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue };
+    const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue, effectiveSignals, contextProfile, recommendedAgentCount, recommendedSprintCount);
+    return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue, planningSignals: effectiveSignals, contextProfile, recommendedAgentCount, recommendedSprintCount };
   }
 
   if (nextFeature) {
@@ -1574,7 +1641,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
       agent,
       attachmentTier: tier
     });
-  } else if (llmResult?.isMultiAgent && llmResult.agentPlan?.length > 0 && complexity >= 7) {
+  } else if (llmResult?.isMultiAgent && llmResult.agentPlan?.length > 0 && recommendedAgentCount >= 2) {
     for (const spec of llmResult.agentPlan) {
       sprints.push({
         sprintId: spec.sprintId,
@@ -1583,7 +1650,7 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
         dependsOn: spec.dependsOn || [],
         brief: buildSprintBrief(taskDescription, project, { ...llmResult, taskProfile: effectiveTaskProfile }, scan, spec, sprints, matrixFlags, agent, continueGate, codemapPath, null),
         agent: selectAgentFromId(spec.role),
-        attachmentTier: scoreToAttachmentTier(complexity)
+        attachmentTier: tier
       });
     }
   } else {
@@ -1599,15 +1666,17 @@ async function generateSprintPlan(taskDescription, project, llmResult, scan, com
     });
   }
 
-  const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue);
-  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue };
+  const masterBrief = buildMasterBrief(project, scan, { ...llmResult, taskProfile: effectiveTaskProfile }, matrixFlags, agent, complexity, continueGate, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue, effectiveSignals, contextProfile, recommendedAgentCount, recommendedSprintCount);
+  return { sprints, masterBrief, matrixFlags, attachmentTier: tier, continueGate, executionResult, selectedFeature: nextFeature, featureOracle, scopeSelectionReason, featureQueue, milestoneQueue, planningSignals: effectiveSignals, contextProfile, recommendedAgentCount, recommendedSprintCount };
 }
 
-function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, selectedFeature = null, featureGate = null, featureOracle = null) {
+function buildMatrixFlags(complexity, planningSignals, riskLevel, scopeGuess, llmResult, selectedFeature = null, featureGate = null, featureOracle = null, contextProfile = 'standard') {
   const flags = [];
-  if (complexity >= 7)  flags.push({ flag: 'COMPLEXITY_HIGH', note: `complexity=${complexity} — PGE-sprint enforced` });
-  if (complexity >= 4)  flags.push({ flag: 'COMPLEXITY_MED', note: `complexity=${complexity} — consider multi-sprint` });
-  if (riskLevel === 'high') flags.push({ flag: 'RISK_HIGH', note: 'L1 acceptance enforced — no L0 shortcuts' });
+  if (complexity >= 7) flags.push({ flag: 'COMPLEXITY_HIGH', note: `legacy complexity=${complexity} — larger orchestration likely` });
+  if (planningSignals?.scopeScore >= 5) flags.push({ flag: 'SCOPE_MULTI_SPRINT', note: `scopeScore=${planningSignals.scopeScore} — consider multi-sprint` });
+  if (planningSignals?.coordinationScore >= 7) flags.push({ flag: 'COORD_MULTI_AGENT', note: `coordinationScore=${planningSignals.coordinationScore} — multi-agent likely useful` });
+  if (planningSignals?.contextDependencyScore >= 7) flags.push({ flag: 'CONTEXT_HEAVY', note: `contextProfile=${contextProfile} — provide full focused context` });
+  if (riskLevel === 'high' || planningSignals?.riskScore >= 6) flags.push({ flag: 'RISK_HIGH', note: 'independent verification should be enforced' });
   if (scopeGuess === 'cross-layer' || scopeGuess === 'full-rewrite') flags.push({ flag: 'SCOPE_CROSS', note: `scope=${scopeGuess} — affects multiple layers` });
   if (selectedFeature) flags.push({ flag: 'SINGLE_STORY', note: `dispatch only feature ${selectedFeature.id} in this round` });
   if (featureOracle?.acceptanceCriteria?.length > 0) flags.push({ flag: 'FEATURE_ORACLE', note: `feature carries ${featureOracle.acceptanceCriteria.length} acceptance criteria into oracle chain` });
@@ -1616,7 +1685,7 @@ function buildMatrixFlags(complexity, riskLevel, scopeGuess, llmResult, selected
   return flags;
 }
 
-function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate, featureOracle = null, scopeSelectionReason = null, featureQueue = null, milestoneQueue = null) {
+function buildMasterBrief(project, scan, llmResult, matrixFlags, agent, complexity, continueGate, featureOracle = null, scopeSelectionReason = null, featureQueue = null, milestoneQueue = null, planningSignals = null, contextProfile = 'standard', recommendedAgentCount = 1, recommendedSprintCount = 1) {
   const flagSection = matrixFlags.length > 0
     ? `\n## Matrix Flags\n${matrixFlags.map(f => `- **[${f.flag}]** ${f.note}`).join('\n')}\n`
     : '';
@@ -1665,11 +1734,18 @@ ${formatAcceptanceCriteriaMarkdown(featureOracle.acceptanceCriteria)}
 
   const brief = `# Architectural Brief — ${project.displayName}
 > harness.js v5-preview | ${new Date().toISOString()}
-> Mode: ${MODE_ARG} | Complexity: ${complexity}/10 | Profile: ${scoreToProfile(complexity)}
+> Mode: ${MODE_ARG} | Legacy Complexity: ${complexity}/10 | Profile: ${scoreToProfile(complexity)} | Context: ${contextProfile}
 
 ## 任务画像
 - **类型**: ${llmResult?.taskProfile?.taskType || 'unknown'}
-- **复杂度**: ${complexity}/10 → ${scoreToProfile(complexity)}
+- **复杂度（兼容字段）**: ${complexity}/10 → ${scoreToProfile(complexity)}
+- **Scope Score**: ${planningSignals?.scopeScore ?? 'n/a'}/10
+- **Coordination Score**: ${planningSignals?.coordinationScore ?? 'n/a'}/10
+- **Context Dependency Score**: ${planningSignals?.contextDependencyScore ?? 'n/a'}/10
+- **Risk Score**: ${planningSignals?.riskScore ?? 'n/a'}/10
+- **Context Profile**: ${contextProfile}
+- **Recommended Sprints**: ${recommendedSprintCount}
+- **Recommended Agents**: ${recommendedAgentCount}
 - **风险**: ${llmResult?.taskProfile?.riskLevel || 'medium'}
 - **范围**: ${llmResult?.taskProfile?.scopeGuess || 'multi-file'}
 - **Agent**: ${agent.id} (confidence: ${agent.confidence}%)

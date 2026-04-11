@@ -27,6 +27,8 @@ const MAX_FILES_READ_DEFAULT   = 12;  // max source files to include (previews +
 const MAX_DIFF_LINES_DEFAULT    = 60;  // max git diff lines
 const MAX_LOG_ENTRIES_DEFAULT   = 5;   // max git log entries
 const MAX_CHARS_DEFAULT         = 0;   // 0 = no cap; set via --max-chars
+const PROFILE_DEFAULT           = 'standard'; // minimal | standard | full
+const TARGET_DEFAULT            = 'subagent'; // subagent | verifier
 
 // Parse CLI overrides
 function parseLimits(argv) {
@@ -36,13 +38,17 @@ function parseLimits(argv) {
     maxDiffLines: MAX_DIFF_LINES_DEFAULT,
     maxLogEntries: MAX_LOG_ENTRIES_DEFAULT,
     maxChars:      MAX_CHARS_DEFAULT,
+    profile:       PROFILE_DEFAULT,
+    target:        TARGET_DEFAULT,
   };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--max-file-size-kb') limits.maxFileSizeKb = parseInt(argv[++i]) || 8;
-    if (argv[i] === '--max-files')         limits.maxFiles      = parseInt(argv[++i]) || 12;
-    if (argv[i] === '--max-diff-lines')     limits.maxDiffLines  = parseInt(argv[++i]) || 60;
-    if (argv[i] === '--max-log-entries')    limits.maxLogEntries = parseInt(argv[++i]) || 5;
-    if (argv[i] === '--max-chars')           limits.maxChars      = parseInt(argv[++i]) || 0;
+    if (argv[i] === '--max-files')        limits.maxFiles = parseInt(argv[++i]) || 12;
+    if (argv[i] === '--max-diff-lines')   limits.maxDiffLines = parseInt(argv[++i]) || 60;
+    if (argv[i] === '--max-log-entries')  limits.maxLogEntries = parseInt(argv[++i]) || 5;
+    if (argv[i] === '--max-chars')        limits.maxChars = parseInt(argv[++i]) || 0;
+    if (argv[i] === '--profile')          limits.profile = argv[++i] || PROFILE_DEFAULT;
+    if (argv[i] === '--target')           limits.target = argv[++i] || TARGET_DEFAULT;
   }
   return limits;
 }
@@ -61,31 +67,87 @@ export async function run(repoPath, taskDescription, overrides = {}) {
   console.log(`\n📡 ContextAssembler: building context package for:`);
   console.log(`   Repo: ${workDir}`);
   console.log(`   Task: ${task}`);
+  console.log(`   Profile: ${limits.profile} | Target: ${limits.target}`);
   console.log(`   Limits: maxFiles=${limits.maxFiles} maxFileSizeKb=${limits.maxFileSizeKb} maxChars=${limits.maxChars || 'none'}`);
 
-  // Gather all context sections in parallel
+  const sectionPlan = deriveSectionPlan(limits.profile, limits.target);
+
+  // Gather all context sections in parallel (but gate heavy sections by profile)
   const [gitState, featuresState, contractsState, handoffsState, activeState, relevant] = await Promise.all([
-    gatherGitState(workDir, limits),
-    gatherFeatures(workDir),
-    gatherContracts(workDir),
-    gatherHandoffs(workDir),
-    gatherActive(workDir),
-    gatherRelevantMaterials(workDir, task, limits),
+    sectionPlan.includeGit ? gatherGitState(workDir, limits) : Promise.resolve(null),
+    sectionPlan.includeFeatures ? gatherFeatures(workDir) : Promise.resolve(null),
+    sectionPlan.includeContracts ? gatherContracts(workDir) : Promise.resolve(null),
+    sectionPlan.includeHandoffs ? gatherHandoffs(workDir) : Promise.resolve(null),
+    sectionPlan.includeActive ? gatherActive(workDir) : Promise.resolve(null),
+    sectionPlan.includeRelevant ? gatherRelevantMaterials(workDir, task, limits) : Promise.resolve({ previews: [], snippets: [] }),
   ]);
 
-  // Build package
-  const pkg = buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, relevant, limits });
+  // Build package + metadata
+  const pkg = buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, relevant, limits, sectionPlan });
+  const meta = buildContextMeta({ workDir, task, timestamp, limits, sectionPlan, relevant, featuresState, contractsState, handoffsState, activeState });
 
-  // Write file
+  // Write files
   const contextDir = path.join(workDir, CONTEXT_DIR);
   await mkdir(contextDir, { recursive: true });
   const outPath = path.join(contextDir, `context-package-${timestamp}.md`);
+  const metaPath = path.join(contextDir, `context-package-${timestamp}.json`);
   await writeFile(outPath, pkg);
+  await writeFile(metaPath, JSON.stringify(meta, null, 2));
 
   console.log(`   ✅ Context package: ${outPath}`);
+  console.log(`   🧾 Context meta: ${metaPath}`);
   console.log(`   Size: ${pkg.length} chars | Previews: ${relevant.previews.length} | Snippet files: ${relevant.snippets.length}`);
 
   return outPath;
+}
+
+/** Derive which sections to include based on profile + target */
+function deriveSectionPlan(profile, target) {
+  const minimal = ['git', 'relevant'];
+  const standard = ['git', 'active', 'features', 'relevant'];
+  const full = ['git', 'active', 'features', 'contracts', 'handoffs', 'relevant'];
+
+  let include = full;
+  if (profile === 'minimal') include = minimal;
+  else if (profile === 'standard') include = standard;
+
+  const conditional = (profile === 'standard' || profile === 'full')
+    ? ['features', 'contracts']
+    : [];
+  const onDemand = profile === 'full' ? ['handoffs'] : [];
+
+  return {
+    includeSections: include,
+    conditionalSections: conditional,
+    onDemandSections: onDemand,
+    sectionPlanDescription: `[${include.join(', ')}]` +
+      (conditional.length ? ` +conditional[${conditional.join(',')}]` : '') +
+      (onDemand.length ? ` +onDemand[${onDemand.join(',')}]` : ''),
+  };
+}
+
+/** Write a machine-readable .json companion alongside the .md package */
+function buildContextMeta({ workDir, task, timestamp, limits, sectionPlan, relevant, featuresState, contractsState, handoffsState, activeState }) {
+  return {
+    generatedAt: new Date().toISOString(),
+    workDir,
+    task,
+    profile: limits.profile,
+    target: limits.target,
+    sectionPlan: sectionPlan.sectionPlanDescription,
+    includeSections: sectionPlan.includeSections,
+    conditionalSections: sectionPlan.conditionalSections,
+    onDemandSections: sectionPlan.onDemandSections,
+    stats: {
+      previewCount: relevant.previews.length,
+      snippetCount: relevant.snippets.length,
+      featuresCount: featuresState?.features?.length || 0,
+      contractsCount: contractsState?.contracts?.length || 0,
+      handoffsCount: handoffsState?.handoffs?.length || 0,
+      hasActive: activeState?.hasActive || false,
+    },
+    callSignature: `ContextAssembler invoked with --profile=${limits.profile} --target=${limits.target}`,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -409,83 +471,111 @@ function extractKeywords(task) {
 // ─────────────────────────────────────────────────────────────
 // Build the context package markdown
 // ─────────────────────────────────────────────────────────────
-function buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, relevant, limits }) {
+function buildPackage({ workDir, task, timestamp, gitState, featuresState, contractsState, handoffsState, activeState, relevant, limits, sectionPlan }) {
   const lines = [];
+  const sp = sectionPlan || { includeSections: ['git','active','features','contracts','relevant'], conditionalSections: [], onDemandSections: [] };
+  const req = (s, content) => sp.includeSections.includes(s) ? content : null;
+  const cond = (s, content) => sp.conditionalSections.includes(s) ? content : null;
+  const onDemand = (s, content) => sp.onDemandSections.includes(s) ? content : null;
 
   lines.push(`# Context Package`);
   lines.push(`> Built by ContextAssembler | ${timestamp} | task: ${task}`);
+  lines.push(`> Profile: ${limits.profile} | Target: ${limits.target} | Sections: ${sp.sectionPlanDescription}`);
   lines.push('');
 
-  // ── Git State ──────────────────────────────────────────────
-  lines.push(`## 📋 Git State`);
-  lines.push(`- **Branch**: \`${gitState.branch}\``);
-  lines.push(`- **Status**: ${gitState.status === '_clean_' ? '✅ clean' : '⚠️ dirty'}`);
-  if (gitState.status !== '_clean_') {
-    lines.push(`\`\`\``);
-    lines.push(gitState.status);
-    lines.push(`\`\`\``);
-  }
-  lines.push('');
-  if (gitState.log) {
-    lines.push(`## 📜 Recent Commits (last ${limits.maxLogEntries})`);
-    lines.push('```');
-    lines.push(gitState.log);
-    lines.push('```');
-    lines.push('');
-  }
-  if (gitState.diff) {
-    lines.push(`## 🔍 Uncommitted Changes`);
-    lines.push('```');
-    lines.push(gitState.diff);
-    lines.push('```');
-    lines.push('');
-  }
+  // ── Git State [required] ───────────────────────────────────
+  const gitSection = req('git', () => {
+    const out = [];
+    out.push(`## 📋 Git State  \[required\]`);
+    out.push(`- **Branch**: \`${gitState.branch}\``);
+    out.push(`- **Status**: ${gitState.status === '_clean_' ? '✅ clean' : '⚠️ dirty'}`);
+    if (gitState.status !== '_clean_') {
+      out.push(`\`\`\``);
+      out.push(gitState.status);
+      out.push(`\`\`\``);
+    }
+    out.push('');
+    if (gitState.log) {
+      out.push(`### 📜 Recent Commits (last ${limits.maxLogEntries})  \[required\]`);
+      out.push('```');
+      out.push(gitState.log);
+      out.push('```');
+      out.push('');
+    }
+    if (gitState.diff) {
+      out.push(`### 🔍 Uncommitted Changes  \[conditional\]`);
+      out.push('```');
+      out.push(gitState.diff);
+      out.push('```');
+      out.push('');
+    }
+    return out.join('\n');
+  });
+  if (gitSection) lines.push(gitSection);
 
-  // ── Features ──────────────────────────────────────────────
-  if (featuresState) {
-    lines.push(`## 🎯 Features (${featuresState.passing}/${featuresState.total} passing)`);
+  // ── Active State [required in standard] ───────────────────
+  const activeSection = req('active', () => {
+    if (!activeState.hasActive) return null;
+    const out = [];
+    out.push(`## ⚡ Active Run  \[required\]`);
+    out.push(`- **Type**: ${activeState.activeType}`);
+    out.push(`- **Started**: ${activeState.startedAt}`);
+    out.push(`- **Branch**: \`${activeState.branch}\``);
+    if (activeState.brief) {
+      out.push('');
+      out.push(activeState.brief);
+    }
+    out.push('');
+    return out.join('\n');
+  });
+  if (activeSection) lines.push(activeSection);
+
+  // ── Features [conditional] ─────────────────────────────────
+  const featSection = cond('features', () => {
+    if (!featuresState) return null;
+    const out = [];
+    out.push(`## 🎯 Features (${featuresState.passing}/${featuresState.total} passing)  \[conditional\]`);
     if (featuresState.unfinished.length > 0) {
-      lines.push('### Unfinished:');
+      out.push('### Unfinished:');
       for (const f of featuresState.unfinished) {
-        const extras = [
-          `priority=${f.priority}`,
-          `size=${f.size || 'n/a'}`,
-          `acceptance=${f.acceptanceCriteriaCount || 0}`
-        ].join(' | ');
-        lines.push(`- [ ] **${f.id}: ${f.title}** (${extras})`);
+        const extras = [`priority=${f.priority}`, `size=${f.size || 'n/a'}`, `acceptance=${f.acceptanceCriteriaCount || 0}`].join(' | ');
+        out.push(`- [ ] **${f.id}: ${f.title}** (${extras})`);
       }
     } else {
-      lines.push('✅ All features passing');
+      out.push('✅ All features passing');
     }
-    lines.push('');
-  }
+    out.push('');
+    return out.join('\n');
+  });
+  if (featSection) lines.push(featSection);
 
-  // ── Active Contract ────────────────────────────────────────
-  if (contractsState) {
-    lines.push(`## 📄 Latest Sprint Contract`);
-    lines.push(`**File**: \`${contractsState.latestFile}\``);
-    lines.push('');
-    lines.push(contractsState.summary);
-    lines.push('');
-  }
+  // ── Contracts [conditional] ───────────────────────────────
+  const contractSection = cond('contracts', () => {
+    if (!contractsState) return null;
+    const out = [];
+    out.push(`## 📄 Latest Sprint Contract  \[conditional\]`);
+    out.push(`**File**: \`${contractsState.latestFile}\``);
+    out.push('');
+    out.push(contractsState.summary);
+    out.push('');
+    return out.join('\n');
+  });
+  if (contractSection) lines.push(contractSection);
 
-  // ── Latest Handoff ─────────────────────────────────────────
-  if (handoffsState) {
-    lines.push(`## 🔄 Latest Handoff`);
-    lines.push(`**File**: \`${handoffsState.latestFile}\``);
-    lines.push('');
-    lines.push(handoffsState.summary);
-    lines.push('');
-  }
+  // ── Latest Handoff [on-demand] ─────────────────────────────
+  const handoffSection = onDemand('handoffs', () => {
+    if (!handoffsState) return null;
+    const out = [];
+    out.push(`## 🔄 Latest Handoff  \[on-demand\]`);
+    out.push(`**File**: \`${handoffsState.latestFile}\``);
+    out.push('');
+    out.push(handoffsState.summary);
+    out.push('');
+    return out.join('\n');
+  });
+  if (handoffSection) lines.push(handoffSection);
 
-  // ── ACTIVE.md ─────────────────────────────────────────────
-  if (activeState) {
-    lines.push(`## ▶️  ACTIVE.md`);
-    lines.push(activeState.summary);
-    lines.push('');
-  }
-
-  // ── Relevant Snippets (docs/large files, extracted windows) ─
+  // ── Relevant Snippets (docs/large files, extracted windows) ─ [required]
   if (relevant?.snippets?.length > 0) {
     lines.push(`## ✂️  Relevant Snippets (extracted; large docs are NOT inlined)`);
     lines.push(`> If more context is needed, request specific files/sections; do not ask for “the whole doc”.`);
@@ -510,7 +600,7 @@ function buildPackage({ workDir, task, timestamp, gitState, featuresState, contr
     }
   }
 
-  // ── Small File Previews (inline only if small) ──────────────
+  // ── Small File Previews (inline only if small) ────────────── [required]
   if (relevant?.previews?.length > 0) {
     lines.push(`## 📂 Relevant Small File Previews (keyword matched; size-capped)`);
     lines.push('');

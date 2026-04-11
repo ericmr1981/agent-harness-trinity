@@ -9,7 +9,7 @@
 
 | Project | Repo | ACTIVE.md | Status | Last Updated |
 |---------|------|-----------|--------|--------------|
-| agent-harness-trinity | `/Users/ericmr/Documents/GitHub/agent-harness-trinity` | `ACTIVE.md` | running | 2026-04-11 |
+| workspace | `/Users/ericmr/Documents/GitHub/agent-harness-trinity` | `ACTIVE.md` | running | 2026-04-11 10:21 |
 
 ---
 
@@ -19,4 +19,4 @@
 
 | # | Project | Repo | Status | Notes |
 |---|---------|------|--------|-------|
-| 1 | agent-harness-trinity | `/Users/ericmr/Documents/GitHub/agent-harness-trinity` | running | Trinity skill suite master repo |
+| 1 | workspace | `/Users/ericmr/Documents/GitHub/agent-harness-trinity` | running | Trinity skill suite master repo |

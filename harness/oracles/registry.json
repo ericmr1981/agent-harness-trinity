@@ -1,0 +1,76 @@
+{
+  "updatedAt": "2026-04-11T10:21:35.970Z",
+  "lastDiscovered": "bash scripts/run_trinity_guard.sh",
+  "history": [
+    {
+      "at": "2026-04-11T10:21:35.971Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:35.633Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:35.323Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:35.032Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:34.738Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:34.455Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:34.174Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:33.883Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:33.537Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:33.220Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:32.927Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:32.635Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:32.341Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    },
+    {
+      "at": "2026-04-11T10:21:32.055Z",
+      "type": "discovered",
+      "value": "bash scripts/run_trinity_guard.sh"
+    }
+  ]
+}
